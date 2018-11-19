@@ -43,7 +43,8 @@ func main() {
 		// Without a host name we can't really get an ID, so die.
 		log.Fatalf("Could not get hostname")
 	}
-
+	//TODO: Change later
+	name = "127.0.0.1"
 	id := fmt.Sprintf("%s:%d", name, raftPort)
 	log.Printf("Starting peer with ID %s", id)
 
@@ -59,7 +60,7 @@ func main() {
 	s := grpc.NewServer()
 
 	// Initialize KVStore
-	store := KVStore{C: make(chan InputChannelType), store: make(map[string]int64)}
+	store := KVStore{ControlChan:make(chan ControlArgs), C: make(chan InputChannelType), store: make(map[string]int64)}
 	go serve(&store, r, &peers, id, raftPort)
 
 	// Tell GRPC that s will be serving requests for the KvStore service and should use store (defined on line 23)

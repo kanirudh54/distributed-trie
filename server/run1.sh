@@ -1,0 +1,3 @@
+go get -v ./...
+go build .
+./server -peer "127.0.0.1:3001" -peer "127.0.0.1:3007" -port 3002 -raft 3003 

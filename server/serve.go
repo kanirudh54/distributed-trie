@@ -26,23 +26,25 @@ type RequestArgs struct {
 type ReplyArgs struct {
 	arg      *pb.UpdateSecondaryTrieReply
 }
-
+/*
 type ControlArgs struct {
 	arg *pb.ControlRequest
 }
-
+*/
 // Struct off of which we shall hang the Raft service
 type Repl struct {
-	ControlChan chan ControlArgs
+	//ControlChan chan ControlArgs
 	RequestChan chan RequestArgs
 	ReplyChan   chan ReplyArgs
 }
-
+/*
 func (r *Repl) Init(ctx context.Context, arg *pb.ControlRequest) (*pb.Empty, error) {
+	log.Printf("In main Init")
 	r.ControlChan <- ControlArgs{arg: arg}
+	defer log.Printf("return from main init")
 	return &pb.Empty{}, nil
 }
-
+*/
 func (r *Repl) UpdateSecondary(ctx context.Context, arg *pb.UpdateSecondaryTrieRequest) (*pb.Empty, error) {
 	r.RequestChan <- RequestArgs{arg: arg}
 	return &pb.Empty{}, nil
@@ -56,8 +58,8 @@ func (r *Repl) AckPrimary(ctx context.Context, arg *pb.UpdateSecondaryTrieReply 
 // Compute a random duration in milliseconds
 func randomDuration(r *rand.Rand) time.Duration {
 	// Constant
-	const DurationMax = 50000 //4000
-	const DurationMin = 25000 //1000
+	const DurationMax = 5000 //4000
+	const DurationMin = 2500 //1000
 	return time.Duration(r.Intn(DurationMax-DurationMin)+DurationMin) * time.Millisecond
 }
 
@@ -140,12 +142,13 @@ func serve(s *KVStore, r *rand.Rand, peers *arrayPeers, id string, port int) {
 	}
 	var role = Secondary
 	var requestNumber int64 = 0
-	var primaryId string = ""
+	var primaryId string = ""//"127.0.0.1:3003"
 	// Create a timer and start running it
 	timer := time.NewTimer(randomDuration(r))
 
 	// Run forever handling inputs from various channels
 	for {
+		log.Printf("Role: %v, RequestNum: %v, PrimaryId: %v, myId: %v", role, requestNumber, primaryId, id)
 		for k, v := range peerStates {
 			log.Printf("Peer: %v", k)
 			for r,w := range v.requests{
@@ -180,6 +183,7 @@ func serve(s *KVStore, r *rand.Rand, peers *arrayPeers, id string, port int) {
 			if _, ok:= selfState.completed[req.arg.GetRequestNumber()]; role == Secondary && !ok {//TODO: deal with concurrent Trie requests
 				selfState.completed[req.arg.GetRequestNumber()] = true
 				go s.HandleCommandSecondary( pb.Command{Operation: pb.Op_SET, Arg: &pb.Command_Set{Set: &pb.Key{Key: req.arg.GetWord()}}})
+				log.Printf("priaryId: %v", primaryId)
 				peerClients[primaryId].AckPrimary(context.Background(), &pb.UpdateSecondaryTrieReply{RequestNumber: req.arg.GetRequestNumber(), Success : true, Peer : id})
 				log.Printf("Sending Ack to primary %v from %v", primaryId, id)
 			}
@@ -189,7 +193,8 @@ func serve(s *KVStore, r *rand.Rand, peers *arrayPeers, id string, port int) {
 				log.Printf("Replicated request %v on peer %v", rep.arg.GetRequestNumber(), rep.arg.GetPeer())
 			}
 
-		case con := <-repl.ControlChan:
+		case con := <-s.ControlChan:
+			log.Printf("In COntrolChan and id is %v", con.arg.GetPrimaryId())
 			if con.arg.GetPrimaryId() == id {
 				//TODO: reset Table
 				log.Printf("I am Primary. My id is %v", id)
