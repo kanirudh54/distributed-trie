@@ -1,0 +1,102 @@
+syntax = "proto3";
+
+package pb;
+
+// Represents a single key, used for gets.
+message Key {
+    string key = 1;
+}
+
+// Represents a single value, can be used for put etc.
+message Value {
+    int64 value = 1;
+}
+
+// Represent a key-value pair that is used to return results.
+message KeyValue {
+    string key = 1;
+    int64 value = 2;
+}
+
+// Represent a void message indicating success
+message Success {
+}
+
+// Represents an error.
+message Error {
+    string msg = 1;
+}
+
+// Represents an empty message
+message Empty {}
+
+// Represents an operation result.
+message Result {
+    oneof result {
+        KeyValue kv = 1;
+        Success s = 2;
+    }
+}
+
+// Trie service
+service KvStore {
+    // Get the value associated with a key.
+    rpc Get (Key) returns (Result) {}
+    rpc Set (Key) returns (Result) {}
+    rpc Clear(Empty) returns (Result) {}
+}
+
+// Internal representations for operations.
+enum Op {
+    GET = 0;
+    SET = 1;
+    CLEAR = 2;
+}
+
+// A type for arguments across all operations
+message Command {
+    Op operation = 1;
+    oneof arg {
+        Key get = 2;
+        Key set = 3;
+        Empty clear = 4;
+    }
+}
+// Client to primary
+message updateTrieRequest {
+    string word = 1;	
+}
+
+message lookupTrieRequest {
+	string prefix = 1;
+}
+
+
+message lookupTrieReply {
+	//repeated string result = 1;
+	int64 result = 1;
+	bool success = 2;
+}
+// Primary to secondary
+message updateSecondaryTrieRequest{
+	string word = 1;
+	int64 requestNumber = 2;
+}
+
+message updateSecondaryTrieReply{
+	int64 requestNumber = 1;
+	bool success = 2;
+	string peer = 3;
+}
+
+message controlRequest{
+	int64 requestNumber = 1;
+	string primaryId = 2;
+}
+
+// Replication service
+service Repl {
+	rpc Init(controlRequest) returns (Empty) {}
+	rpc UpdateSecondary(updateSecondaryTrieRequest) returns (Empty)	{}
+	rpc AckPrimary(updateSecondaryTrieReply) returns (Empty) {}
+}
