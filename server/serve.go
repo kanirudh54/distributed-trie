@@ -39,9 +39,7 @@ type Repl struct {
 }
 
 func (r *Repl) Init(ctx context.Context, arg *pb.ControlRequest) (*pb.Empty, error) {
-	log.Printf("In main Init")
 	r.ControlChan <- ControlArgs{arg: arg}
-	defer log.Printf("return from main init")
 	return &pb.Empty{}, nil
 }
 
@@ -113,7 +111,7 @@ func connectToPeer(peer string) (pb.ReplClient, error) {
 }
 
 // The main service loop. All modifications to the Trie are run through here.
-func serve(s *KVStore, r *rand.Rand, peers *arrayPeers, id string, port int) {
+func serve(s *TrieStore, r *rand.Rand, peers *arrayPeers, id string, port int) {
 	repl := Repl{ControlChan: make(chan ControlArgs),RequestChan: make(chan RequestArgs), ReplyChan: make(chan ReplyArgs)}
 	// Start in a Go routine so it doesn't affect us.
 	go RunReplServer(&repl, port)

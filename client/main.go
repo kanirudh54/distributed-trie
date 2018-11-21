@@ -17,6 +17,28 @@ func usage() {
 	flag.PrintDefaults()
 }
 
+
+func add(word string, kvc pb.TrieStoreClient) {
+	putReq := &pb.Key{Key: word}
+	res, err := kvc.Set(context.Background(), putReq)
+	if err != nil {
+		log.Fatalf("Put error")
+	}
+	//log.Printf("Got response key: \"%v\" value:\"%v\"", res.GetKv().Key, res.GetKv().Value)
+	log.Printf("Got response for set : \"%v\" value:\"%v\"", res.GetSuggestions(), res.GetS())
+}
+
+func get(word string, kvc pb.TrieStoreClient) {
+	req := &pb.Key{Key: word}
+	res, err := kvc.Get(context.Background(), req)
+	if err != nil {
+		log.Fatalf("Request error %v", err)
+	}
+	log.Printf("Got response for get %v : \"%v\" value:\"%v\"", word, res.GetSuggestions(), res.GetS())
+}
+
+
+
 func main() {
 	// Take endpoint as input
 	flag.Usage = usage
@@ -69,7 +91,7 @@ func main() {
 	}
 	log.Printf("Connected")
 	// Create a KvStore client
-	kvc := pb.NewKvStoreClient(conn)
+	kvc := pb.NewTrieStoreClient(conn)
 	/*
 	// Clear KVC
 	_, err = kvc.Clear(context.Background(), &pb.Empty{})
@@ -79,44 +101,52 @@ func main() {
 	//log.Printf("Got redirect %v", res.GetRedirect())
 	*/
 	// Put setting hello -> 1
-	putReq := &pb.Key{Key: "hello"}
-	res, err := kvc.Set(context.Background(), putReq)
-	if err != nil {
-		log.Fatalf("Put error")
-	}
-	log.Printf("Got response key: \"%v\" value:\"%v\"", res.GetKv().Key, res.GetKv().Value)
-	if res.GetKv().Key != "hello" || res.GetKv().Value != 1 {
-		log.Fatalf("Put returned the wrong response")
-	}
 
-	// Request value for hello
-	req := &pb.Key{Key: "hello"}
-	res, err = kvc.Get(context.Background(), req)
-	if err != nil {
-		log.Fatalf("Request error %v", err)
-	}
-	log.Printf("Got response key: \"%v\" value:\"%v\"", res.GetKv().Key, res.GetKv().Value)
-	if res.GetKv().Key != "hello" || res.GetKv().Value != 1 {
-		log.Fatalf("Get returned the wrong response")
-	}
-	putReq = &pb.Key{Key: "hello"}
-	res, err = kvc.Set(context.Background(), putReq)
-	if err != nil {
-		log.Fatalf("Put error")
-	}
-	log.Printf("Got response key: \"%v\" value:\"%v\"", res.GetKv().Key, res.GetKv().Value)
-	if res.GetKv().Key != "hello" || res.GetKv().Value != 2 {
-		log.Fatalf("Put returned the wrong response")
-	}
 
-	// Request value for hello
-	req = &pb.Key{Key: "hello"}
-	res, err = kvc.Get(context.Background(), req)
-	if err != nil {
-		log.Fatalf("Request error %v", err)
-	}
-	log.Printf("Got response key: \"%v\" value:\"%v\"", res.GetKv().Key, res.GetKv().Value)
-	if res.GetKv().Key != "hello" || res.GetKv().Value != 2 {
-		log.Fatalf("Get returned the wrong response")
-	}
+	add("hello", kvc)
+	add("hello", kvc)
+	add("hello", kvc)
+	add("hello", kvc)
+	add("hello", kvc)
+
+	add("hell", kvc)
+
+	add("hi", kvc)
+	add("hi", kvc)
+	add("hi", kvc)
+	add("hi", kvc)
+	add("hi", kvc)
+	add("hi", kvc)
+
+
+	add("hey", kvc)
+	add("wassup", kvc)
+	add("heat", kvc)
+	add("heap", kvc)
+	add("hype", kvc)
+	add("help", kvc)
+	add("high", kvc)
+	add("hot", kvc)
+	add("hit", kvc)
+	add("him", kvc)
+	add("hill", kvc)
+	add("hike", kvc)
+	add("hym", kvc)
+	add("hip", kvc)
+	add("hip", kvc)
+	add("hip", kvc)
+	add("hip", kvc)
+	add("hip", kvc)
+	add("hip", kvc)
+
+
+
+
+
+	get("he", kvc)
+	get("hi", kvc)
+	get("h", kvc)
+
+
+
 }

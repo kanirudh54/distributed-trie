@@ -60,12 +60,12 @@ func main() {
 	s := grpc.NewServer()
 
 	// Initialize KVStore
-	store := KVStore{C: make(chan InputChannelType), store: make(map[string]int64)}
+	store := TrieStore{C: make(chan InputChannelType), root: createTrieNode()}
 	go serve(&store, r, &peers, id, raftPort)
 
 	// Tell GRPC that s will be serving requests for the KvStore service and should use store (defined on line 23)
 	// as the struct whose methods should be called in response.
-	pb.RegisterKvStoreServer(s, &store)
+	pb.RegisterTrieStoreServer(s, &store)
 	log.Printf("Going to listen on port %v", clientPort)
 	// Start serving, this will block this function and only return when done.
 	if err := s.Serve(c); err != nil {
