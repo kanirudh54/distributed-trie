@@ -41,7 +41,7 @@ message Result {
 // Trie service
 service KvStore {
     // Get the value associated with a key.
-    rpc Init(controlRequest) returns (Empty) {}
+    //rpc Init(controlRequest) returns (Empty) {}
     rpc Get (Key) returns (Result) {}
     rpc Set (Key) returns (Result) {}
     rpc Clear(Empty) returns (Result) {}
@@ -97,6 +97,7 @@ message controlRequest{
 
 // Replication service
 service Repl {
+	rpc Init(controlRequest) returns (Empty) {}
 	rpc UpdateSecondary(updateSecondaryTrieRequest) returns (Empty)	{}
 	rpc AckPrimary(updateSecondaryTrieReply) returns (Empty) {}
 }

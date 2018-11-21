@@ -26,24 +26,50 @@ func main() {
 		flag.Usage()
 		os.Exit(1)
 	}
-	trieEndpoint := flag.Args()[0]
-	log.Printf("Connecting to %v", trieEndpoint)
+	leaderTrieEndpoint := flag.Args()[0]
+	replEndpoint_1 := flag.Args()[1] // Init info to peers
+	replEndpoint_2 := flag.Args()[2] // Init info to peers
+
+	// Sending Init to peers
+	log.Printf("Connecting to %v", replEndpoint_1)
 	// Connect to the server. We use WithInsecure since we do not configure https in this class.
-	conn, err := grpc.Dial(trieEndpoint, grpc.WithInsecure())
+	conn, err := grpc.Dial(replEndpoint_1, grpc.WithInsecure())
+	repl1 := pb.NewReplClient(conn)
+	//Ensure connection did not fail.
+	if err != nil {
+		log.Fatalf("Failed to dial GRPC repl server_1 %v", err)
+	}
+	log.Printf("Connected")
+	_, err = repl1.Init(context.Background(), &pb.ControlRequest{RequestNumber: 1, PrimaryId: "127.0.0.1:3003"} )
+	log.Printf("After init to server_1 in client")
+	if err != nil {
+		log.Fatalf("Could not Init repl Primary, err: %v", err)
+	}
+	log.Printf("Connecting to %v", replEndpoint_2)
+	// Connect to the server. We use WithInsecure since we do not configure https in this class.
+	conn, err = grpc.Dial(replEndpoint_2, grpc.WithInsecure())
+	repl2 := pb.NewReplClient(conn)
+	//Ensure connection did not fail.
+	if err != nil {
+		log.Fatalf("Failed to dial GRPC repl server_2 %v", err)
+	}
+	log.Printf("Connected")
+	_, err = repl2.Init(context.Background(), &pb.ControlRequest{RequestNumber: 1, PrimaryId: "127.0.0.1:3003"} )
+	log.Printf("After init to server_1 in client")
+	if err != nil {
+		log.Fatalf("Could not Init repl Primary, err: %v", err)
+	}
+	// Normal execution
+	// Connect to the server. We use WithInsecure since we do not configure https in this class.
+	log.Printf("Connecting to %v", leaderTrieEndpoint)
+	conn, err = grpc.Dial(leaderTrieEndpoint, grpc.WithInsecure())
 	//Ensure connection did not fail.
 	if err != nil {
 		log.Fatalf("Failed to dial GRPC server %v", err)
 	}
 	log.Printf("Connected")
-
 	// Create a KvStore client
 	kvc := pb.NewKvStoreClient(conn)
-
-	_, err = kvc.Init(context.Background(), &pb.ControlRequest{RequestNumber: 1, PrimaryId: "127.0.0.1:3003"} )
-	log.Printf("After init in client")
-	if err != nil {
-		log.Fatalf("Could not Init repl Primary, err: %v", err)
-	}
 	/*
 	// Clear KVC
 	_, err = kvc.Clear(context.Background(), &pb.Empty{})

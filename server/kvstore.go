@@ -13,17 +13,18 @@ type InputChannelType struct {
 	command  pb.Command
 	response chan pb.Result
 }
+/*
 type ControlArgs struct {
 	arg *pb.ControlRequest
 }
-
+*/
 // The struct for key value stores.
 type KVStore struct {
-	ControlChan chan ControlArgs
+	//ControlChan chan ControlArgs
 	C     chan InputChannelType
 	store map[string]int64
 }
-
+/*
 func (s *KVStore) Init(ctx context.Context, arg *pb.ControlRequest) (*pb.Empty, error) {
 	log.Printf("Inside Kvstore init")
 	// Send request over the channel
@@ -31,7 +32,7 @@ func (s *KVStore) Init(ctx context.Context, arg *pb.ControlRequest) (*pb.Empty, 
 	log.Printf("Sent to controlChan")
 	return &pb.Empty{}, nil
 }
-
+*/
 func (s *KVStore) Get(ctx context.Context, key *pb.Key) (*pb.Result, error) {
 	// Create a channel
 	c := make(chan pb.Result)

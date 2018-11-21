@@ -26,25 +26,25 @@ type RequestArgs struct {
 type ReplyArgs struct {
 	arg      *pb.UpdateSecondaryTrieReply
 }
-/*
+
 type ControlArgs struct {
 	arg *pb.ControlRequest
 }
-*/
+
 // Struct off of which we shall hang the Raft service
 type Repl struct {
-	//ControlChan chan ControlArgs
+	ControlChan chan ControlArgs
 	RequestChan chan RequestArgs
 	ReplyChan   chan ReplyArgs
 }
-/*
+
 func (r *Repl) Init(ctx context.Context, arg *pb.ControlRequest) (*pb.Empty, error) {
 	log.Printf("In main Init")
 	r.ControlChan <- ControlArgs{arg: arg}
 	defer log.Printf("return from main init")
 	return &pb.Empty{}, nil
 }
-*/
+
 func (r *Repl) UpdateSecondary(ctx context.Context, arg *pb.UpdateSecondaryTrieRequest) (*pb.Empty, error) {
 	r.RequestChan <- RequestArgs{arg: arg}
 	return &pb.Empty{}, nil
@@ -114,7 +114,7 @@ func connectToPeer(peer string) (pb.ReplClient, error) {
 
 // The main service loop. All modifications to the Trie are run through here.
 func serve(s *KVStore, r *rand.Rand, peers *arrayPeers, id string, port int) {
-	repl := Repl{RequestChan: make(chan RequestArgs), ReplyChan: make(chan ReplyArgs)}
+	repl := Repl{ControlChan: make(chan ControlArgs),RequestChan: make(chan RequestArgs), ReplyChan: make(chan ReplyArgs)}
 	// Start in a Go routine so it doesn't affect us.
 	go RunReplServer(&repl, port)
 
@@ -184,7 +184,8 @@ func serve(s *KVStore, r *rand.Rand, peers *arrayPeers, id string, port int) {
 				selfState.completed[req.arg.GetRequestNumber()] = true
 				go s.HandleCommandSecondary( pb.Command{Operation: pb.Op_SET, Arg: &pb.Command_Set{Set: &pb.Key{Key: req.arg.GetWord()}}})
 				log.Printf("priaryId: %v", primaryId)
-				peerClients[primaryId].AckPrimary(context.Background(), &pb.UpdateSecondaryTrieReply{RequestNumber: req.arg.GetRequestNumber(), Success : true, Peer : id})
+				peerClients[primaryId].AckPrimary(context.Background(),
+					&pb.UpdateSecondaryTrieReply{RequestNumber: req.arg.GetRequestNumber(), Success : true, Peer : id})
 				log.Printf("Sending Ack to primary %v from %v", primaryId, id)
 			}
 		case rep := <-repl.ReplyChan:
@@ -193,7 +194,7 @@ func serve(s *KVStore, r *rand.Rand, peers *arrayPeers, id string, port int) {
 				log.Printf("Replicated request %v on peer %v", rep.arg.GetRequestNumber(), rep.arg.GetPeer())
 			}
 
-		case con := <-s.ControlChan:
+		case con := <-repl.ControlChan:
 			log.Printf("In COntrolChan and id is %v", con.arg.GetPrimaryId())
 			if con.arg.GetPrimaryId() == id {
 				//TODO: reset Table
