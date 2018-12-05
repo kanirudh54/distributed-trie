@@ -1,14 +1,13 @@
 package main
 
 import (
-	"fmt"
-	"log"
+	"../pb"
 	"container/heap"
 	_ "container/heap"
-
+	"fmt"
+	"golang.org/x/net/context"
+	"log"
 	"math"
-	context "golang.org/x/net/context"
-	"github.com/nyu-distributed-systems-fa18/distributed-trie/pb"
 )
 
 

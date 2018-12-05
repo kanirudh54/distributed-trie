@@ -1,12 +1,12 @@
 package main
 
 import (
+	"../pb"
 	"fmt"
-	"github.com/nyu-distributed-systems-fa18/distributed-trie/pb"
-	context "golang.org/x/net/context"
+	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"log"
-	rand "math/rand"
+	"math/rand"
 	"net"
 	"time"
 )
@@ -15,6 +15,7 @@ import (
 const (
 	Primary = "primary"
 	Secondary = "secondary"
+	StandBy = "standby"
 )
 
 // Messages that can be passed from the Raft RPC server to the main loop for AppendEntries
@@ -144,8 +145,13 @@ func serve(s *TrieStore, r *rand.Rand, peers *arrayPeers, id string, port int) {
 	// Create a timer and start running it
 	timer := time.NewTimer(randomDuration(r))
 
-	// Run forever handling inputs from various channels
+
+
+
+
 	for {
+
+		log.Printf("Updated Code")
 		log.Printf("Role: %v, RequestNum: %v, PrimaryId: %v, myId: %v", role, requestNumber, primaryId, id)
 		for k, v := range peerStates {
 			log.Printf("Peer: %v", k)
@@ -156,55 +162,119 @@ func serve(s *TrieStore, r *rand.Rand, peers *arrayPeers, id string, port int) {
 		for k,v := range selfState.completed {
 			log.Printf("Req: %v , Success: %v", k, v)
 		}
-		select {
-		case <-timer.C:
-			log.Printf("timer off")
-			restartTimer(timer, r)
-		case op := <-s.C:
-			// Call handle command for op
-			go s.HandleCommand(op)
-			// Do replication if Set - Update
-			log.Printf("Op is %v", op.command.GetOperation())
-			if op.command.GetOperation() == 1 { //set
-				requestNumber += 1
-				for p, c := range peerClients {
-					word :=  op.command.GetSet().GetKey()
-					peerStates[p].requests[requestNumber] = word
-					go func(c pb.ReplClient, p string) {
-						c.UpdateSecondary(context.Background(), &pb.UpdateSecondaryTrieRequest{Word:word, RequestNumber:requestNumber})
-					}(c, p)
-					log.Printf("Sent ReplicateReq (%v,%v) to %v", requestNumber, word, p)
+
+
+
+		if role == StandBy {
+
+			select {
+
+				case <-timer.C:
+					log.Printf("timer off")
+					restartTimer(timer, r)
+
+
+
+				case con := <-repl.ControlChan:
+					log.Printf("In ControlChan and id is %v", con.arg.GetPrimaryId())
+					if con.arg.GetPrimaryId() == id {
+						//TODO: reset Table
+						log.Printf("I am Primary. My id is %v", id)
+						requestNumber = con.arg.GetRequestNumber()
+						role = Primary
+					} else { //TODO: reset the tables
+						role = Secondary
+						primaryId = con.arg.GetPrimaryId()
+						log.Printf("I am Secondary. My id is %v and my Primary is %v", id, primaryId)
+					}
 				}
-			}
-		case req := <-repl.RequestChan:
-			// replicate and update selfstate
-			if _, ok:= selfState.completed[req.arg.GetRequestNumber()]; role == Secondary && !ok {//TODO: deal with concurrent Trie requests
-				selfState.completed[req.arg.GetRequestNumber()] = true
-				go s.HandleCommandSecondary( pb.Command{Operation: pb.Op_SET, Arg: &pb.Command_Set{Set: &pb.Key{Key: req.arg.GetWord()}}})
-				log.Printf("priaryId: %v", primaryId)
-				peerClients[primaryId].AckPrimary(context.Background(),
-					&pb.UpdateSecondaryTrieReply{RequestNumber: req.arg.GetRequestNumber(), Success : true, Peer : id})
-				log.Printf("Sending Ack to primary %v from %v", primaryId, id)
-			}
-		case rep := <-repl.ReplyChan:
-			if rep.arg.GetSuccess() {
-				delete (peerStates[rep.arg.GetPeer()].requests, rep.arg.GetRequestNumber())
-				log.Printf("Replicated request %v on peer %v", rep.arg.GetRequestNumber(), rep.arg.GetPeer())
+
+		} else if role == Primary {
+
+			select {
+				case <-timer.C:
+					log.Printf("timer off")
+					restartTimer(timer, r)
+				case op := <-s.C:
+					// Call handle command for op
+					go s.HandleCommand(op)
+					// Do replication if Set - Update
+					log.Printf("Op is %v", op.command.GetOperation())
+					if op.command.GetOperation() == 1 { //set
+						requestNumber += 1
+						for p, c := range peerClients {
+							word :=  op.command.GetSet().GetKey()
+							peerStates[p].requests[requestNumber] = word
+							go func(c pb.ReplClient, p string) {
+								_, err := c.UpdateSecondary(context.Background(), &pb.UpdateSecondaryTrieRequest{Word:word, RequestNumber:requestNumber})
+								if err != nil{
+									log.Printf("Unable to replicate request number %v to secondary %v with error %v, will update inext time.", requestNumber, p, err)
+								}
+							}(c, p)
+							log.Printf("Sent ReplicateReq (%v,%v) to %v", requestNumber, word, p)
+						}
+					}
+
+				case rep := <-repl.ReplyChan:
+					if rep.arg.GetSuccess() {
+						delete (peerStates[rep.arg.GetPeer()].requests, rep.arg.GetRequestNumber())
+						log.Printf("Replicated request %v on peer %v", rep.arg.GetRequestNumber(), rep.arg.GetPeer())
+					}
+
+				case con := <-repl.ControlChan:
+					log.Printf("In ControlChan and id is %v", con.arg.GetPrimaryId())
+					if con.arg.GetPrimaryId() == id {
+						//TODO: reset Table
+						log.Printf("I am Primary. My id is %v", id)
+						requestNumber = con.arg.GetRequestNumber()
+						role = Primary
+					} else { //TODO: reset the tables
+						role = Secondary
+						primaryId = con.arg.GetPrimaryId()
+						log.Printf("I am Secondary. My id is %v and my Primary is %v", id, primaryId)
+					}
 			}
 
-		case con := <-repl.ControlChan:
-			log.Printf("In COntrolChan and id is %v", con.arg.GetPrimaryId())
-			if con.arg.GetPrimaryId() == id {
-				//TODO: reset Table
-				log.Printf("I am Primary. My id is %v", id)
-				requestNumber = con.arg.GetRequestNumber()
-				role = Primary
-			} else { //TODO: reset the tables
-				role = Secondary
-				primaryId = con.arg.GetPrimaryId()
-				log.Printf("I am Secondary. My id is %v and my Primary is %v", id, primaryId)
-			}
+
+		} else if role == Secondary {
+
+			select {
+				case <-timer.C:
+					log.Printf("timer off")
+					restartTimer(timer, r)
+
+
+				case req := <-repl.RequestChan:
+					// replicate and update selfstate
+					if _, ok:= selfState.completed[req.arg.GetRequestNumber()]; role == Secondary && !ok {//TODO: deal with concurrent Trie requests
+						selfState.completed[req.arg.GetRequestNumber()] = true
+						go s.HandleCommandSecondary( pb.Command{Operation: pb.Op_SET, Arg: &pb.Command_Set{Set: &pb.Key{Key: req.arg.GetWord()}}})
+						log.Printf("priaryId: %v", primaryId)
+						_, err := peerClients[primaryId].AckPrimary(context.Background(),
+							&pb.UpdateSecondaryTrieReply{RequestNumber: req.arg.GetRequestNumber(), Success : true, Peer : id})
+						if err != nil{
+							repl.RequestChan <- req
+						}
+						log.Printf("Sending Ack to primary %v from %v", primaryId, id)
+					}
+
+
+				case con := <-repl.ControlChan:
+					log.Printf("In COntrolChan and id is %v", con.arg.GetPrimaryId())
+					if con.arg.GetPrimaryId() == id {
+						//TODO: reset Table
+						log.Printf("I am Primary. My id is %v", id)
+						requestNumber = con.arg.GetRequestNumber()
+						role = Primary
+					} else { //TODO: reset the tables
+						role = Secondary
+						primaryId = con.arg.GetPrimaryId()
+						log.Printf("I am Secondary. My id is %v and my Primary is %v", id, primaryId)
+					}
+				}
+
 		}
 	}
 	log.Printf("Strange to arrive here")
+
 }

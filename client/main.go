@@ -1,15 +1,13 @@
 package main
 
 import (
+	"../pb"
 	"flag"
 	"fmt"
+	"golang.org/x/net/context"
+	"google.golang.org/grpc"
 	"log"
 	"os"
-
-	context "golang.org/x/net/context"
-	"google.golang.org/grpc"
-
-	"github.com/nyu-distributed-systems-fa18/distributed-trie/pb"
 )
 
 func usage() {

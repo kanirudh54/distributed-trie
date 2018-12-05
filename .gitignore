@@ -11,6 +11,10 @@
 # Output of the go coverage tool, specifically when used with LiteIDE
 *.out
 
+# IntelliJ files
+*.idea
+#MAC Files
+.DS_STORE
 # Do not check in build results
 server/server
 client/client
