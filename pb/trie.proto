@@ -93,9 +93,53 @@ message controlRequest{
 	string primaryId = 2;
 }
 
+message portIntroInfo{
+    string replId = 1;
+}
+
+message ackIntroInfo{
+    bool success = 1;
+}
+
+message heartbeatMessage{
+}
+
+
+message heartbeatAckArg{
+    portIntroInfo key = 1;
+    int64 val = 2;
+}
+
+message heartbeatAckMessage{
+    portIntroInfo id = 1;
+    repeated heartbeatAckArg table = 2;
+}
+
+message secondaryList{
+    repeated portIntroInfo secondaries = 1;
+    int64 requestNumber = 2;
+}
+
+
+
+
+
 // Replication service
 service Repl {
-	rpc Init(controlRequest) returns (Empty) {}
-	rpc UpdateSecondary(updateSecondaryTrieRequest) returns (Empty)	{}
-	rpc AckPrimary(updateSecondaryTrieReply) returns (Empty) {}
+    rpc AckIntroduction(ackIntroInfo) returns (Empty) {} // Ack for Introduce StandBy
+	rpc UpdateSecondary(updateSecondaryTrieRequest) returns (Empty)	{} // Updating Secondary Trie Node with singke query
+	rpc AckPrimary(updateSecondaryTrieReply) returns (Empty) {} // Ack from Secondary to Primary for trie update
+
+    rpc Heartbeat(heartbeatMessage) returns (Empty) {} // Heartbeat from Manager to Primary
+
+    rpc MakePrimary(secondaryList) returns (Empty) {}
+    rpc MakeSecondary(portIntroInfo) returns (Empty) {}
+}
+
+//Manager Service
+service Manager {
+
+    rpc IntroduceSelf(portIntroInfo) returns (Empty) {} // Introduce standby to manager
+    rpc HeartbeatAck(heartbeatAckMessage) returns (Empty) {} // Ack for heartbeat from primary to manager
+
 }
