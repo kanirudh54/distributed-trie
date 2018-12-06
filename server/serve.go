@@ -89,9 +89,8 @@ func (r *Repl) AckPrimary(ctx context.Context, arg *pb.UpdateSecondaryTrieReply 
 // Compute a random duration in milliseconds
 func randomDuration(r *rand.Rand) time.Duration {
 	// Constant
-	const DurationMax = 5000 //4000
-	const DurationMin = 2500 //1000
-	return time.Duration(r.Intn(DurationMax-DurationMin)+DurationMin) * time.Millisecond
+	const Duration = 2000
+	return time.Duration(Duration) * time.Millisecond
 }
 
 // Restart the supplied timer using a random timeout based on function above

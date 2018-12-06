@@ -6,6 +6,7 @@ import (
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"log"
+	"math/rand"
 	"time"
 )
 
@@ -68,7 +69,13 @@ func connect(repl string) (*grpc.ClientConn, error) {
 
 }
 
-func restartTimer(timer *time.Timer) {
+func randomDuration(r *rand.Rand) time.Duration {
+	// Constant
+	const Duration = 2000
+	return time.Duration(Duration) * time.Millisecond
+}
+
+func restartTimer(timer *time.Timer, r *rand.Rand) {
 	stopped := timer.Stop()
 	// If stopped is false that means someone stopped before us, which could be due to the timer going off before this,
 	// in which case we just drain notifications.
@@ -79,11 +86,11 @@ func restartTimer(timer *time.Timer) {
 		}
 
 	}
-	timer.Reset(10000)
+	timer.Reset(randomDuration(r))
 }
 
 
-func manage (manage *Manager) {
+func manage (manage *Manager, r *rand.Rand) {
 
 
 	var primaryMapping = make(map[string] *pb.PortIntroInfo) //prefix --> primary
@@ -97,16 +104,22 @@ func manage (manage *Manager) {
 	//StandBy Table
 	standbyServers := make([] *pb.PortIntroInfo, 0)
 
-	timer := time.NewTimer(10000) //Send HB after every 2 seconds
+
+	timer := time.NewTimer(randomDuration(r))
 
 	//go RunManageServer(&manage, managerPort)
+
+	log.Printf("Starting Manager")
 
 	for {
 
 		select {
 
 			case <- timer.C:
-				//log.Printf("Timer went off")
+				log.Printf("Timer went off")
+				log.Printf("Number of Primary Servers : %v", len(primaryHB))
+				log.Printf("Number of StandBy Servers : %v", len(standbyServers))
+
 				for primary := range primaryHB{
 
 					log.Printf("Sending HeartBeat to %v", primary.ReplId)
@@ -129,6 +142,8 @@ func manage (manage *Manager) {
 				}
 
 				if len(standbyServers) > 0 {
+					log.Printf("Have %v servers in StandBy", len(standbyServers))
+					log.Printf("Have %v Primary Servers", len(primaryHB))
 					if len(primaryHB) == 0 {
 						//Create Primary from StandBy
 						var standbyServer = standbyServers[0]
@@ -154,6 +169,7 @@ func manage (manage *Manager) {
 
 					}
 					for primaryKey := range table{
+						log.Printf("Primary %v has %v secondaries", primaryKey.ReplId, len(table[primaryKey]))
 						if len(table[primaryKey]) < maxSecondaries{
 							if len(standbyServers) > 0 {
 								var standbyServer = standbyServers[0]
@@ -199,7 +215,7 @@ func manage (manage *Manager) {
 						}
 					}
 				}
-				restartTimer(timer)
+				restartTimer(timer, r)
 
 
 			case portInfo := <- manage.InitChan:
