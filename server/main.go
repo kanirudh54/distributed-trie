@@ -19,14 +19,20 @@ func main() {
 	var r *rand.Rand
 	var seed int64
 	var peers arrayPeers
+
 	var clientPort int
-	var raftPort int
+	var replPort int
+	var managerPort int
+
 	flag.Int64Var(&seed, "seed", -1,
 		"Seed for random number generator, values less than 0 result in use of time")
 	flag.IntVar(&clientPort, "port", 3000,
 		"Port on which server should listen to client requests")
-	flag.IntVar(&raftPort, "raft", 3001,
+	flag.IntVar(&replPort, "raft", 3001,
 		"Port on which server should listen to Raft requests")
+	flag.IntVar(&managerPort, "manager", 4000,
+		"Port on which Repl Manager runs")
+
 	flag.Var(&peers, "peer", "A peer for this process")
 	flag.Parse()
 
@@ -45,7 +51,7 @@ func main() {
 	}
 	//TODO: Change later
 	name = "127.0.0.1"
-	id := fmt.Sprintf("%s:%d", name, raftPort)
+	id := fmt.Sprintf("%s:%d", name, replPort)
 	log.Printf("Starting peer with ID %s", id)
 
 	// Convert port to a string form
@@ -58,10 +64,25 @@ func main() {
 	}
 	// Create a new GRPC server
 	s := grpc.NewServer()
+	// Connect to manager
+
+	managerPortString := fmt.Sprintf(":%d", managerPort)
+	log.Printf("Connecting to %v", managerPortString)
+	// Connect to the server. We use WithInsecure since we do not configure https in this class.
+	conn, err := grpc.Dial(managerPortString, grpc.WithInsecure())
+	manager := pb.NewManagerClient(conn)
+	//Ensure connection did not fail.
+	if err != nil {
+		log.Fatalf("Failed to dial GRPC repl server_1 %v", err)
+	}
+	log.Printf("Connected")
+
 
 	// Initialize KVStore
+
 	store := TrieStore{C: make(chan InputChannelType), root: createTrieNode()}
-	go serve(&store, r, &peers, id, raftPort)
+
+	go serve(&store, r, &peers, id, replPort, manager)
 
 	// Tell GRPC that s will be serving requests for the KvStore service and should use store (defined on line 23)
 	// as the struct whose methods should be called in response.

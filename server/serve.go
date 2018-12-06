@@ -28,19 +28,51 @@ type ReplyArgs struct {
 	arg      *pb.UpdateSecondaryTrieReply
 }
 
-type ControlArgs struct {
-	arg *pb.ControlRequest
+type AckIntroArgs struct {
+	arg *pb.AckIntroInfo
+}
+
+type HeartbeatArgs struct {
+	arg *pb.HeartbeatMessage
+}
+
+type MakePrimaryArgs struct {
+	arg *pb.SecondaryList
+}
+
+type MakeSecondaryArgs struct {
+	arg *pb.PortIntroInfo
 }
 
 // Struct off of which we shall hang the Raft service
 type Repl struct {
-	ControlChan chan ControlArgs
+
+	MakePrimaryChan chan MakePrimaryArgs
+	MakeSecondaryChan chan MakeSecondaryArgs
+	InitChan chan AckIntroArgs
 	RequestChan chan RequestArgs
 	ReplyChan   chan ReplyArgs
+	HeartbeatChan chan HeartbeatArgs
+
 }
 
-func (r *Repl) Init(ctx context.Context, arg *pb.ControlRequest) (*pb.Empty, error) {
-	r.ControlChan <- ControlArgs{arg: arg}
+func (r *Repl) MakePrimary(ctx context.Context, arg *pb.SecondaryList) (*pb.Empty, error) {
+	r.MakePrimaryChan <- MakePrimaryArgs{arg:arg}
+	return &pb.Empty{}, nil
+}
+
+func (r *Repl) MakeSecondary(ctx context.Context, arg *pb.PortIntroInfo) (*pb.Empty, error) {
+	r.MakeSecondaryChan <- MakeSecondaryArgs{arg:arg}
+	return &pb.Empty{}, nil
+}
+
+func (r *Repl) AckIntroduction(ctx context.Context, arg *pb.AckIntroInfo) (*pb.Empty, error) {
+	r.InitChan <- AckIntroArgs{arg:arg}
+	return &pb.Empty{}, nil
+}
+
+func (r *Repl) Heartbeat(ctx context.Context, arg *pb.HeartbeatMessage) (*pb.Empty, error) {
+	r.HeartbeatChan <- HeartbeatArgs{arg:arg}
 	return &pb.Empty{}, nil
 }
 
@@ -112,166 +144,184 @@ func connectToPeer(peer string) (pb.ReplClient, error) {
 }
 
 // The main service loop. All modifications to the Trie are run through here.
-func serve(s *TrieStore, r *rand.Rand, peers *arrayPeers, id string, port int) {
-	repl := Repl{ControlChan: make(chan ControlArgs),RequestChan: make(chan RequestArgs), ReplyChan: make(chan ReplyArgs)}
-	// Start in a Go routine so it doesn't affect us.
-	go RunReplServer(&repl, port)
+func serve(s *TrieStore, r *rand.Rand, peers *arrayPeers, id string, replPort int, manager pb.ManagerClient) {
 
-	peerClients := make(map[string]pb.ReplClient)
+	repl := Repl{
+		RequestChan: make(chan RequestArgs),
+		ReplyChan: make(chan ReplyArgs),
+		InitChan : make(chan AckIntroArgs),
+		HeartbeatChan : make(chan HeartbeatArgs),
+		MakePrimaryChan : make(chan MakePrimaryArgs),
+		MakeSecondaryChan : make(chan MakeSecondaryArgs),
+	}
+
+
+	// Start in a Go routine so it doesn't affect us.
+	go RunReplServer(&repl, replPort)
 
 	// Peer state
-	type PeerState struct {
+	type SecondaryGlobalState struct {
 		requests map[int64]string
 	}
 	// Current node's state
-	type SelfState struct {
+	type SecondaryLocalState struct {
 		completed map[int64]bool
 	}
 
-	peerStates := make(map[string] *PeerState)
-	selfState := SelfState{make(map[int64]bool)}
-	for _, peer := range *peers {
-		client, err := connectToPeer(peer)
-		if err != nil {
-			log.Fatalf("Failed to connect to GRPC server %v", err)
-		}
-		peerStates[peer] = &PeerState{make(map[int64]string)}
-		peerClients[peer] = client
-		log.Printf("Connected to %v", peer)
-	}
-	var role = Secondary
+	secondaryGlobalStates := make(map[string] *SecondaryGlobalState)
+	secondaryLocalState := SecondaryLocalState{make(map[int64]bool)}
+	stackClients := make(map[string]pb.ReplClient)
+
+
+	var role = StandBy
 	var requestNumber int64 = 0
-	var primaryId string = ""//"127.0.0.1:3003"
+	var primaryId = ""//"127.0.0.1:3003"
 	// Create a timer and start running it
 	timer := time.NewTimer(randomDuration(r))
 
 
-
-
+	var acknowledged = false
 
 	for {
 
-		log.Printf("Updated Code")
 		log.Printf("Role: %v, RequestNum: %v, PrimaryId: %v, myId: %v", role, requestNumber, primaryId, id)
-		for k, v := range peerStates {
+		for k, v := range secondaryGlobalStates {
 			log.Printf("Peer: %v", k)
 			for r,w := range v.requests{
 				log.Printf("Req: %v , Word: %v", r, w)
 			}
 		}
-		for k,v := range selfState.completed {
+		for k,v := range secondaryLocalState.completed {
 			log.Printf("Req: %v , Success: %v", k, v)
 		}
 
+		select {
+			case prim := <- repl.MakePrimaryChan:
 
-
-		if role == StandBy {
-
-			select {
-
-				case <-timer.C:
-					log.Printf("timer off")
-					restartTimer(timer, r)
-
-
-
-				case con := <-repl.ControlChan:
-					log.Printf("In ControlChan and id is %v", con.arg.GetPrimaryId())
-					if con.arg.GetPrimaryId() == id {
-						//TODO: reset Table
-						log.Printf("I am Primary. My id is %v", id)
-						requestNumber = con.arg.GetRequestNumber()
-						role = Primary
-					} else { //TODO: reset the tables
-						role = Secondary
-						primaryId = con.arg.GetPrimaryId()
-						log.Printf("I am Secondary. My id is %v and my Primary is %v", id, primaryId)
+				secondaryGlobalStates = make(map[string] *SecondaryGlobalState)
+				stackClients := make(map[string]pb.ReplClient)
+				for _, secondary := range prim.arg.Secondaries{
+					secondaryPeer, err := connectToPeer(secondary.ReplId)
+					if err != nil {
+						log.Fatalf("Failed to connect to GRPC secondary server %v", err)
 					}
+					secondaryGlobalStates[secondary.ReplId] = &SecondaryGlobalState{make(map[int64]string)}
+					stackClients[secondary.ReplId] = secondaryPeer
+					log.Printf("Connected to %v", secondary.ReplId)
+				}
+				if prim.arg.RequestNumber < 0{
+					if role == Primary {
+						//Dont change Req Number
+					} else if role == Secondary {
+						requestNumber = int64(len(secondaryLocalState.completed))
+					}
+				} else {
+					requestNumber = prim.arg.RequestNumber
 				}
 
-		} else if role == Primary {
+				secondaryLocalState = SecondaryLocalState{make(map[int64]bool)}
+				role = Primary
 
-			select {
-				case <-timer.C:
-					log.Printf("timer off")
-					restartTimer(timer, r)
-				case op := <-s.C:
-					// Call handle command for op
+			case sec := <- repl.MakeSecondaryChan:
+				role = Secondary
+				secondaryGlobalStates = make(map[string] *SecondaryGlobalState)
+				secondaryLocalState = SecondaryLocalState{make(map[int64]bool)}
+				stackClients = make(map[string]pb.ReplClient)
+				primaryId = sec.arg.ReplId
+				primaryPeer, err := connectToPeer(primaryId)
+				if err != nil {
+					log.Fatalf("Failed to connect to GRPC primary server %v", err)
+				}
+				stackClients[primaryId] = primaryPeer
+				log.Printf("Connected to %v", primaryId)
+
+			case <-timer.C:
+				log.Printf("timer off")
+				if role == StandBy {
+					if !acknowledged {
+						_, err := manager.IntroduceSelf(context.Background(), &pb.PortIntroInfo{ReplId: "127.0.0.1:" + fmt.Sprintf("%v", replPort)})
+						if err != nil {
+							log.Printf("Error while introducing self to Manager : %v", err)
+						}
+					}
+				}
+				restartTimer(timer, r)
+
+
+			case init := <- repl.InitChan:
+				if role == StandBy {
+					acknowledged = init.arg.Success
+				}
+
+			case op := <-s.C:
+
+				if role == Primary {
 					go s.HandleCommand(op)
-					// Do replication if Set - Update
 					log.Printf("Op is %v", op.command.GetOperation())
 					if op.command.GetOperation() == 1 { //set
 						requestNumber += 1
-						for p, c := range peerClients {
-							word :=  op.command.GetSet().GetKey()
-							peerStates[p].requests[requestNumber] = word
+						for p, c := range stackClients {
+							word := op.command.GetSet().GetKey()
+							secondaryGlobalStates[p].requests[requestNumber] = word
 							go func(c pb.ReplClient, p string) {
-								_, err := c.UpdateSecondary(context.Background(), &pb.UpdateSecondaryTrieRequest{Word:word, RequestNumber:requestNumber})
-								if err != nil{
+								_, err := c.UpdateSecondary(context.Background(), &pb.UpdateSecondaryTrieRequest{Word: word, RequestNumber: requestNumber})
+								if err != nil {
 									log.Printf("Unable to replicate request number %v to secondary %v with error %v, will update inext time.", requestNumber, p, err)
 								}
 							}(c, p)
 							log.Printf("Sent ReplicateReq (%v,%v) to %v", requestNumber, word, p)
 						}
 					}
+				}
 
-				case rep := <-repl.ReplyChan:
+			case rep := <-repl.ReplyChan:
+				if role == Primary {
 					if rep.arg.GetSuccess() {
-						delete (peerStates[rep.arg.GetPeer()].requests, rep.arg.GetRequestNumber())
+						delete(secondaryGlobalStates[rep.arg.GetPeer()].requests, rep.arg.GetRequestNumber())
 						log.Printf("Replicated request %v on peer %v", rep.arg.GetRequestNumber(), rep.arg.GetPeer())
 					}
+				}
 
-				case con := <-repl.ControlChan:
-					log.Printf("In ControlChan and id is %v", con.arg.GetPrimaryId())
-					if con.arg.GetPrimaryId() == id {
-						//TODO: reset Table
-						log.Printf("I am Primary. My id is %v", id)
-						requestNumber = con.arg.GetRequestNumber()
-						role = Primary
-					} else { //TODO: reset the tables
-						role = Secondary
-						primaryId = con.arg.GetPrimaryId()
-						log.Printf("I am Secondary. My id is %v and my Primary is %v", id, primaryId)
+			case  <- repl.HeartbeatChan:
+
+				if role == Primary {
+					var k= pb.HeartbeatAckMessage{}
+
+					for _, peer := range *peers {
+						var t= &pb.HeartbeatAckArg{}
+						var l= 0
+						if len(secondaryGlobalStates) > 0 {
+							l = len(secondaryGlobalStates[peer].requests)
+						}
+						t.Key = &pb.PortIntroInfo{ReplId: peer}
+						t.Val = int64(l)
+						k.Table = append(k.Table, t)
 					}
-			}
+					k.Id = &pb.PortIntroInfo{ReplId: string(replPort)}
+					_, err := manager.HeartbeatAck(context.Background(), &k)
+					if err != nil {
+						log.Printf("Error while sending eartbeat ack to manager error : %v", err)
+					}
+				}
 
 
-		} else if role == Secondary {
-
-			select {
-				case <-timer.C:
-					log.Printf("timer off")
-					restartTimer(timer, r)
-
-
-				case req := <-repl.RequestChan:
+			case req := <-repl.RequestChan:
+				if role == Secondary {
 					// replicate and update selfstate
-					if _, ok:= selfState.completed[req.arg.GetRequestNumber()]; role == Secondary && !ok {//TODO: deal with concurrent Trie requests
-						selfState.completed[req.arg.GetRequestNumber()] = true
-						go s.HandleCommandSecondary( pb.Command{Operation: pb.Op_SET, Arg: &pb.Command_Set{Set: &pb.Key{Key: req.arg.GetWord()}}})
+					if _, ok := secondaryLocalState.completed[req.arg.GetRequestNumber()]; role == Secondary && !ok { //TODO: deal with concurrent Trie requests
+						secondaryLocalState.completed[req.arg.GetRequestNumber()] = true
+						go s.HandleCommandSecondary(pb.Command{Operation: pb.Op_SET, Arg: &pb.Command_Set{Set: &pb.Key{Key: req.arg.GetWord()}}})
 						log.Printf("priaryId: %v", primaryId)
-						_, err := peerClients[primaryId].AckPrimary(context.Background(),
-							&pb.UpdateSecondaryTrieReply{RequestNumber: req.arg.GetRequestNumber(), Success : true, Peer : id})
-						if err != nil{
+						_, err := stackClients[primaryId].AckPrimary(context.Background(),
+							&pb.UpdateSecondaryTrieReply{RequestNumber: req.arg.GetRequestNumber(), Success: true, Peer: id})
+						if err != nil {
 							repl.RequestChan <- req
 						}
 						log.Printf("Sending Ack to primary %v from %v", primaryId, id)
 					}
-
-
-				case con := <-repl.ControlChan:
-					log.Printf("In COntrolChan and id is %v", con.arg.GetPrimaryId())
-					if con.arg.GetPrimaryId() == id {
-						//TODO: reset Table
-						log.Printf("I am Primary. My id is %v", id)
-						requestNumber = con.arg.GetRequestNumber()
-						role = Primary
-					} else { //TODO: reset the tables
-						role = Secondary
-						primaryId = con.arg.GetPrimaryId()
-						log.Printf("I am Secondary. My id is %v and my Primary is %v", id, primaryId)
-					}
 				}
+
+
 
 		}
 	}
