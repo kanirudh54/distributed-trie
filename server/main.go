@@ -18,7 +18,6 @@ func main() {
 	// Argument parsing
 	var r *rand.Rand
 	var seed int64
-	var peers arrayPeers
 
 	var clientPort int
 	var replPort int
@@ -33,7 +32,6 @@ func main() {
 	flag.IntVar(&managerPort, "manager", 4000,
 		"Port on which Repl Manager runs")
 
-	flag.Var(&peers, "peer", "A peer for this process")
 	flag.Parse()
 
 	// Initialize the random number generator
@@ -82,7 +80,7 @@ func main() {
 
 	store := TrieStore{C: make(chan InputChannelType), root: createTrieNode()}
 
-	go serve(&store, r, &peers, id, replPort, manager)
+	go serve(&store, r, id, replPort, manager)
 
 	// Tell GRPC that s will be serving requests for the KvStore service and should use store (defined on line 23)
 	// as the struct whose methods should be called in response.

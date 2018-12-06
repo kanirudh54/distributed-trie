@@ -143,7 +143,7 @@ func connectToPeer(peer string) (pb.ReplClient, error) {
 }
 
 // The main service loop. All modifications to the Trie are run through here.
-func serve(s *TrieStore, r *rand.Rand, peers *arrayPeers, id string, replPort int, manager pb.ManagerClient) {
+func serve(s *TrieStore, r *rand.Rand, id string, replPort int, manager pb.ManagerClient) {
 
 	repl := Repl{
 		RequestChan: make(chan RequestArgs),
@@ -286,20 +286,20 @@ func serve(s *TrieStore, r *rand.Rand, peers *arrayPeers, id string, replPort in
 				if role == Primary {
 					var k= pb.HeartbeatAckMessage{}
 
-					for _, peer := range *peers {
+					for p,_ := range stackClients {
 						var t= &pb.HeartbeatAckArg{}
 						var l= 0
 						if len(secondaryGlobalStates) > 0 {
-							l = len(secondaryGlobalStates[peer].requests)
+							l = len(secondaryGlobalStates[p].requests)
 						}
-						t.Key = &pb.PortIntroInfo{ReplId: peer}
+						t.Key = &pb.PortIntroInfo{ReplId: p}
 						t.Val = int64(l)
 						k.Table = append(k.Table, t)
 					}
-					k.Id = &pb.PortIntroInfo{ReplId: string(replPort)}
+					k.Id = &pb.PortIntroInfo{ReplId: id}
 					_, err := manager.HeartbeatAck(context.Background(), &k)
 					if err != nil {
-						log.Printf("Error while sending eartbeat ack to manager error : %v", err)
+						log.Printf("Error while sending heartbeat ack to manager error : %v", err)
 					}
 				}
 

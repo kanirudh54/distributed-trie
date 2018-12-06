@@ -34,27 +34,6 @@ func (r *Manager) IntroduceSelf(ctx context.Context, arg *pb.PortIntroInfo) (*pb
 	return &pb.Empty{}, nil
 }
 
-/*func RunManageServer(r *Manager, port int) {
-	// Convert port to a string form
-	portString := fmt.Sprintf(":%d", port)
-	// Create socket that listens on the supplied port
-	c, err := net.Listen("tcp", portString)
-	if err != nil {
-		// Note the use of Fatalf which will exit the program after reporting the error.
-		log.Fatalf("Could not create listening socket %v", err)
-	}
-	// Create a new GRPC server
-	s := grpc.NewServer()
-
-	pb.RegisterManagerServer(s, r)
-	log.Printf("Going to listen on port %v", port)
-
-	// Start serving, this will block this function and only return when done.
-	if err := s.Serve(c); err != nil {
-		log.Fatalf("Failed to serve %v", err)
-	}
-}*/
-
 func connect(repl string) (*grpc.ClientConn, error) {
 
 	backoffConfig := grpc.DefaultBackoffConfig
@@ -93,11 +72,11 @@ func restartTimer(timer *time.Timer, r *rand.Rand) {
 func manage (manage *Manager, r *rand.Rand) {
 
 
-	var primaryMapping = make(map[string] *pb.PortIntroInfo) //prefix --> primary
-	var table = make(map[*pb.PortIntroInfo] map[*pb.PortIntroInfo] int64) // primary --> secondaries:lag_counts
+	var primaryMapping = make(map[string] string) //prefix --> primary
+	var table = make(map[string] map[string] int64) // primary --> secondaries:lag_counts
 	var maxSecondaries = 1 //Max Secondary for each primary
 
-	var primaryHB = make(map[*pb.PortIntroInfo] int) //HeartBeat count of primaries
+	var primaryHB = make(map[string] int) //HeartBeat count of primaries
 
 
 
@@ -122,22 +101,22 @@ func manage (manage *Manager, r *rand.Rand) {
 
 				for primary := range primaryHB{
 
-					log.Printf("Sending HeartBeat to %v", primary.ReplId)
-					connection, err := connect(primary.ReplId)
+					log.Printf("Sending HeartBeat to %v", primary)
+					connection, err := connect(primary)
 					if err != nil {
-						log.Printf("Not able to connect to %v error - %v", primary.ReplId, err)
+						log.Printf("Not able to connect to %v error - %v", primary, err)
 					} else {
 						conn := pb.NewReplClient(connection)
 						_, err := conn.Heartbeat(context.Background(), &pb.HeartbeatMessage{})
-						if err != nil {
-							log.Printf("Error while establishing heartbeat cinnection %v", err)
-						}
 						primaryHB[primary] += 1
+						if err != nil {
+							log.Printf("Error while establishing heartbeat connection %v", err)
+						}
 						//TODO Handle primary failure if count > 3
 					}
 					err = connection.Close()
 					if err != nil {
-						log.Printf("Error while closing primary connection %v, error : %v", primary.ReplId, err)
+						log.Printf("Error while closing primary connection %v, error : %v", primary, err)
 					}
 				}
 
@@ -145,8 +124,9 @@ func manage (manage *Manager, r *rand.Rand) {
 					log.Printf("Have %v servers in StandBy", len(standbyServers))
 					log.Printf("Have %v Primary Servers", len(primaryHB))
 					if len(primaryHB) == 0 {
-						//Create Primary from StandBy
+
 						var standbyServer = standbyServers[0]
+						log.Printf("Moving %v from standby to primary", standbyServer.ReplId)
 						connection, err := connect(standbyServer.ReplId)
 						if err != nil {
 							log.Printf("Not able to connect to %v error - %v", standbyServer.ReplId, err)
@@ -158,8 +138,9 @@ func manage (manage *Manager, r *rand.Rand) {
 							if err != nil {
 								log.Printf("Error while calling Make Primary RPC for %v, error - %v", standbyServer.ReplId, err)
 							}
-							primaryHB[standbyServer] = 0 //Updating HeartBeat Mapping
-							primaryMapping["a:z"] = standbyServer //Updating Prefix Mapping
+							primaryHB[standbyServer.ReplId] = 0 //Updating HeartBeat Mapping
+							primaryMapping["a:z"] = standbyServer.ReplId //Updating Prefix Mapping
+							table[standbyServer.ReplId] = make(map[string] int64)
 							standbyServers = standbyServers[1:]
 						}
 						err = connection.Close()
@@ -169,11 +150,12 @@ func manage (manage *Manager, r *rand.Rand) {
 
 					}
 					for primaryKey := range table{
-						log.Printf("Primary %v has %v secondaries", primaryKey.ReplId, len(table[primaryKey]))
+						log.Printf("Primary %v has %v secondaries, max secondaries = %v", primaryKey, len(table[primaryKey]), maxSecondaries)
 						if len(table[primaryKey]) < maxSecondaries{
 							if len(standbyServers) > 0 {
 								var standbyServer = standbyServers[0]
-								primaryConnection, err1 := connect(primaryKey.ReplId)
+								log.Printf("Converting standby server %v to secondary", standbyServer.ReplId)
+								primaryConnection, err1 := connect(primaryKey)
 								secondaryConnection, err2 := connect(standbyServer.ReplId)
 
 								if err1 != nil {
@@ -186,26 +168,25 @@ func manage (manage *Manager, r *rand.Rand) {
 
 									var secondaries = [] *pb.PortIntroInfo{}
 									for secondary := range table[primaryKey] {
-										secondaries = append(secondaries, secondary)
+										secondaries = append(secondaries, &pb.PortIntroInfo{ReplId:secondary})
 									}
 									secondaries = append(secondaries, standbyServer)
 
-									_, err := primaryConn.MakePrimary(context.Background(), &pb.SecondaryList{Secondaries:secondaries, RequestNumber:-1})
-									if err != nil{
-										log.Printf("Error while making primary %v, error %v", primaryKey.ReplId, err)
+									_, err := secondaryConn.MakeSecondary(context.Background(), &pb.PortIntroInfo{ReplId:primaryKey})
+									if err != nil {
+										log.Printf("Error while making sencondary %v, error %v", standbyServer.ReplId, err)
 									} else {
-										_, err := secondaryConn.MakeSecondary(context.Background(), primaryKey)
-										if err != nil {
-											log.Printf("Error while making sencondary %v, error %v", standbyServer.ReplId, err)
+										_, err := primaryConn.MakePrimary(context.Background(), &pb.SecondaryList{Secondaries:secondaries, RequestNumber:-1})
+										if err != nil{
+											log.Printf("Error while making primary %v, error %v", primaryKey, err)
 										}
-
 									}
 
 									standbyServers = standbyServers[1:]
 								}
 								err := primaryConnection.Close()
 								if err != nil {
-									log.Printf("Error while closing primary connectionfor %v, error : %v", primaryKey.ReplId, err)
+									log.Printf("Error while closing primary connectionfor %v, error : %v", primaryKey, err)
 								}
 								err = secondaryConnection.Close()
 								if err != nil {
@@ -219,6 +200,7 @@ func manage (manage *Manager, r *rand.Rand) {
 
 
 			case portInfo := <- manage.InitChan:
+				log.Printf("Received Introduction message from : %v", portInfo.arg.ReplId)
 				connection,err := connect(portInfo.arg.ReplId)
 				if err != nil {
 					log.Printf("Not able to connect to %v, error : %v", portInfo.arg.ReplId, err)
@@ -228,6 +210,7 @@ func manage (manage *Manager, r *rand.Rand) {
 					for _, standbyServer := range standbyServers {
 						if standbyServer.ReplId == portInfo.arg.ReplId{
 							found = true
+							log.Printf("Found new server %v in standBy list. ot adding again.", portInfo.arg.ReplId)
 							break
 						}
 					}
@@ -235,6 +218,8 @@ func manage (manage *Manager, r *rand.Rand) {
 					if !found {
 						standbyServers = append(standbyServers, portInfo.arg)
 					}
+					log.Printf("Sending Ack to StandBy %v", portInfo.arg.ReplId)
+
 					_, err = conn.AckIntroduction(context.Background(), &pb.AckIntroInfo{Success:true})
 					if err != nil {
 						log.Printf("Not able to send ack to %v, error : %v", portInfo.arg.ReplId, err)
@@ -246,13 +231,14 @@ func manage (manage *Manager, r *rand.Rand) {
 				}
 
 			case rep := <- manage.HeartbeatAckChan:
-				primaryHB[rep.arg.Id] = 0
+				log.Printf("Received Heart Beat Ack from %v", rep.arg.Id.ReplId)
+				primaryHB[rep.arg.Id.ReplId] = 0
 				//TODO: keep some global time at manage to drop stale heartbeats
-				var t = make(map[*pb.PortIntroInfo] int64)
+				var t = make(map[string] int64)
 				for _, key := range rep.arg.Table {
-					t[key.Key] = key.Val
+					t[key.Key.ReplId] = key.Val
 				}
-				table[rep.arg.Id] = t
+				table[rep.arg.Id.ReplId] = t
 		}
 	}
 }
