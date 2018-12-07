@@ -130,16 +130,12 @@ func RunReplServer(r *Repl, port int) {
 	}
 }
 
-func connectToPeer(peer string) (pb.ReplClient, error) {
+func connectToPeer(peer string) (*grpc.ClientConn, error) {
 	backoffConfig := grpc.DefaultBackoffConfig
 	// Choose an aggressive backoff strategy here.
 	backoffConfig.MaxDelay = 500 * time.Millisecond
 	conn, err := grpc.Dial(peer, grpc.WithInsecure(), grpc.WithBackoffConfig(backoffConfig))
-	// Ensure connection did not fail, which should not happen since this happens in the background
-	if err != nil {
-		return pb.NewReplClient(nil), err
-	}
-	return pb.NewReplClient(conn), nil
+	return conn, err
 }
 
 // The main service loop. All modifications to the Trie are run through here.
@@ -169,7 +165,6 @@ func serve(s *TrieStore, r *rand.Rand, id string, replPort int, manager pb.Manag
 
 	secondaryGlobalStates := make(map[string] *SecondaryGlobalState)
 	secondaryLocalState := SecondaryLocalState{make(map[int64]bool)}
-	stackClients := make(map[string]pb.ReplClient)
 
 
 	var role = StandBy
@@ -196,17 +191,12 @@ func serve(s *TrieStore, r *rand.Rand, id string, replPort int, manager pb.Manag
 
 		select {
 			case prim := <- repl.MakePrimaryChan:
-
+				// When manager calls MakePrimary
 				secondaryGlobalStates = make(map[string] *SecondaryGlobalState)
-				stackClients := make(map[string]pb.ReplClient)
+				//We update our connections to secondaries
 				for _, secondary := range prim.arg.Secondaries{
-					secondaryPeer, err := connectToPeer(secondary.ReplId)
-					if err != nil {
-						log.Fatalf("Failed to connect to GRPC secondary server %v", err)
-					}
 					secondaryGlobalStates[secondary.ReplId] = &SecondaryGlobalState{make(map[int64]string)}
-					stackClients[secondary.ReplId] = secondaryPeer
-					log.Printf("Connected to %v", secondary.ReplId)
+					log.Printf("Added %v to Secondary map of primary %v", secondary.ReplId, id)
 				}
 				if prim.arg.RequestNumber < 0{
 					if role == Primary {
@@ -222,17 +212,12 @@ func serve(s *TrieStore, r *rand.Rand, id string, replPort int, manager pb.Manag
 				role = Primary
 
 			case sec := <- repl.MakeSecondaryChan:
+				// When manager calls MakePrimary
 				role = Secondary
 				secondaryGlobalStates = make(map[string] *SecondaryGlobalState)
 				secondaryLocalState = SecondaryLocalState{make(map[int64]bool)}
-				stackClients = make(map[string]pb.ReplClient)
 				primaryId = sec.arg.ReplId
-				primaryPeer, err := connectToPeer(primaryId)
-				if err != nil {
-					log.Fatalf("Failed to connect to GRPC primary server %v", err)
-				}
-				stackClients[primaryId] = primaryPeer
-				log.Printf("Connected to %v", primaryId)
+				log.Printf("Became secondary to primary %v", primaryId)
 
 			case <-timer.C:
 				log.Printf("timer off")
@@ -248,32 +233,49 @@ func serve(s *TrieStore, r *rand.Rand, id string, replPort int, manager pb.Manag
 
 
 			case init := <- repl.InitChan:
+				// When manager calls AckIntroduction
 				if role == StandBy {
 					acknowledged = init.arg.Success
 				}
 
 			case op := <-s.C:
-
+				// Manager sends client operation on trie to Primary
 				if role == Primary {
 					go s.HandleCommand(op)
 					log.Printf("Op is %v", op.command.GetOperation())
 					if op.command.GetOperation() == 1 { //set
 						requestNumber += 1
-						for p, c := range stackClients {
+						for secondaryId, secondaryGlobalState := range secondaryGlobalStates {
+
 							word := op.command.GetSet().GetKey()
-							secondaryGlobalStates[p].requests[requestNumber] = word
-							go func(c pb.ReplClient, p string) {
-								_, err := c.UpdateSecondary(context.Background(), &pb.UpdateSecondaryTrieRequest{Word: word, RequestNumber: requestNumber})
-								if err != nil {
-									log.Printf("Unable to replicate request number %v to secondary %v with error %v, will update inext time.", requestNumber, p, err)
-								}
-							}(c, p)
-							log.Printf("Sent ReplicateReq (%v,%v) to %v", requestNumber, word, p)
+							secondaryGlobalState.requests[requestNumber] = word
+
+							conn, err := connectToPeer(secondaryId)
+							if err != nil {
+								log.Printf("Cannot connect to Secondary %v with error %v ", secondaryId, err)
+							} else {
+
+								secondaryConnection := pb.NewReplClient(conn)
+
+								go func(c pb.ReplClient, p string) {
+									_, err := c.UpdateSecondary(context.Background(), &pb.UpdateSecondaryTrieRequest{Word: word, RequestNumber: requestNumber})
+									if err != nil {
+										log.Printf("Unable to replicate request number %v to secondary %v with error %v, will update inext time.", requestNumber, p, err)
+									}
+								}(secondaryConnection, secondaryId)
+								log.Printf("Sent ReplicateReq (%v,%v) deom %v to %v", requestNumber, word, primaryId, secondaryId)
+
+							}
+							err = conn.Close()
+							if err != nil {
+								log.Printf("Error while closing connection between %v and %v : %v", id, secondaryId, err)
+							}
 						}
 					}
 				}
 
 			case rep := <-repl.ReplyChan:
+				// When the secondary repl updates the word in trie and acks
 				if role == Primary {
 					if rep.arg.GetSuccess() {
 						delete(secondaryGlobalStates[rep.arg.GetPeer()].requests, rep.arg.GetRequestNumber())
@@ -282,17 +284,20 @@ func serve(s *TrieStore, r *rand.Rand, id string, replPort int, manager pb.Manag
 				}
 
 			case  <- repl.HeartbeatChan:
-
+				// when manager sends heartbeat to Primary
 				if role == Primary {
 					var k= pb.HeartbeatAckMessage{}
 
-					for p,_ := range stackClients {
+					for secondaryId,secondaryGlobalState := range secondaryGlobalStates {
+
 						var t= &pb.HeartbeatAckArg{}
-						var l= 0
-						if len(secondaryGlobalStates) > 0 {
-							l = len(secondaryGlobalStates[p].requests)
+						var l = 0
+
+						if secondaryGlobalState.requests != nil {
+							l = len(secondaryGlobalState.requests)
 						}
-						t.Key = &pb.PortIntroInfo{ReplId: p}
+
+						t.Key = &pb.PortIntroInfo{ReplId: secondaryId}
 						t.Val = int64(l)
 						k.Table = append(k.Table, t)
 					}
@@ -305,18 +310,33 @@ func serve(s *TrieStore, r *rand.Rand, id string, replPort int, manager pb.Manag
 
 
 			case req := <-repl.RequestChan:
+				// From secondary send ack to primary for update completed
 				if role == Secondary {
 					// replicate and update selfstate
 					if _, ok := secondaryLocalState.completed[req.arg.GetRequestNumber()]; role == Secondary && !ok { //TODO: deal with concurrent Trie requests
 						secondaryLocalState.completed[req.arg.GetRequestNumber()] = true
 						go s.HandleCommandSecondary(pb.Command{Operation: pb.Op_SET, Arg: &pb.Command_Set{Set: &pb.Key{Key: req.arg.GetWord()}}})
 						log.Printf("priaryId: %v", primaryId)
-						_, err := stackClients[primaryId].AckPrimary(context.Background(),
-							&pb.UpdateSecondaryTrieReply{RequestNumber: req.arg.GetRequestNumber(), Success: true, Peer: id})
+
+						conn, err := connectToPeer(primaryId)
 						if err != nil {
-							repl.RequestChan <- req
+							log.Printf("Cannot connect to primary %v from %v with error %v", primaryId, id, err)
+						} else {
+							primaryConnection := pb.NewReplClient(conn)
+							_, err := primaryConnection.AckPrimary(context.Background(),
+								&pb.UpdateSecondaryTrieReply{RequestNumber: req.arg.GetRequestNumber(), Success: true, Peer: id})
+							if err != nil {
+								repl.RequestChan <- req
+								log.Printf("Error while sending Ack from %v to %v : %v ", id, primaryId, err)
+								log.Printf("Placing the request back onto own channel")
+							} else {
+								log.Printf("Sent Ack to primary %v from %v", primaryId, id)
+							}
 						}
-						log.Printf("Sending Ack to primary %v from %v", primaryId, id)
+						err = conn.Close()
+						if err != nil {
+							log.Printf("Error while closing connection between %v and %v : %v", id, primaryId, err)
+						}
 					}
 				}
 

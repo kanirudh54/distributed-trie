@@ -6,7 +6,6 @@ import (
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"log"
-	"math/rand"
 	"time"
 )
 
@@ -48,13 +47,7 @@ func connect(repl string) (*grpc.ClientConn, error) {
 
 }
 
-func randomDuration(r *rand.Rand) time.Duration {
-	// Constant
-	const Duration = 2000
-	return time.Duration(Duration) * time.Millisecond
-}
-
-func restartTimer(timer *time.Timer, r *rand.Rand) {
+func restartTimer(timer *time.Timer) {
 	stopped := timer.Stop()
 	// If stopped is false that means someone stopped before us, which could be due to the timer going off before this,
 	// in which case we just drain notifications.
@@ -65,11 +58,12 @@ func restartTimer(timer *time.Timer, r *rand.Rand) {
 		}
 
 	}
-	timer.Reset(randomDuration(r))
+	const Duration = 2000
+	timer.Reset(time.Duration(Duration) * time.Millisecond)
 }
 
 
-func manage (manage *Manager, r *rand.Rand) {
+func manage (manage *Manager) {
 
 
 	var primaryMapping = make(map[string] string) //prefix --> primary
@@ -84,7 +78,7 @@ func manage (manage *Manager, r *rand.Rand) {
 	standbyServers := make([] *pb.PortIntroInfo, 0)
 
 
-	timer := time.NewTimer(randomDuration(r))
+	timer := time.NewTimer(time.Duration(2000) * time.Millisecond)
 
 	//go RunManageServer(&manage, managerPort)
 
@@ -98,7 +92,7 @@ func manage (manage *Manager, r *rand.Rand) {
 				log.Printf("Timer went off")
 				log.Printf("Number of Primary Servers : %v", len(primaryHB))
 				log.Printf("Number of StandBy Servers : %v", len(standbyServers))
-
+				// Send heartbeat to primaries
 				for primary := range primaryHB{
 
 					log.Printf("Sending HeartBeat to %v", primary)
@@ -119,12 +113,12 @@ func manage (manage *Manager, r *rand.Rand) {
 						log.Printf("Error while closing primary connection %v, error : %v", primary, err)
 					}
 				}
-
+				// See if we can allocate standby servers
 				if len(standbyServers) > 0 {
 					log.Printf("Have %v servers in StandBy", len(standbyServers))
 					log.Printf("Have %v Primary Servers", len(primaryHB))
+					// Create primary if no primary
 					if len(primaryHB) == 0 {
-
 						var standbyServer = standbyServers[0]
 						log.Printf("Moving %v from standby to primary", standbyServer.ReplId)
 						connection, err := connect(standbyServer.ReplId)
@@ -149,54 +143,63 @@ func manage (manage *Manager, r *rand.Rand) {
 						}
 
 					}
+					// Allocate standbys to secondaries if less than the expected
 					for primaryKey := range table{
 						log.Printf("Primary %v has %v secondaries, max secondaries = %v", primaryKey, len(table[primaryKey]), maxSecondaries)
 						if len(table[primaryKey]) < maxSecondaries{
 							if len(standbyServers) > 0 {
 								var standbyServer = standbyServers[0]
 								log.Printf("Converting standby server %v to secondary", standbyServer.ReplId)
-								primaryConnection, err1 := connect(primaryKey)
-								secondaryConnection, err2 := connect(standbyServer.ReplId)
 
+								log.Printf("Updating primary %v about new secondary %v", primaryKey, standbyServer.ReplId)
+								primaryConnection, err1 := connect(primaryKey)
 								if err1 != nil {
 									log.Printf("Not able to connect to %v, error %v", standbyServer.ReplId, err1)
-								} else if err2 != nil {
-									log.Printf("Not able to connect to %v, error %v", standbyServer.ReplId, err2)
-								}else {
-									primaryConn := pb.NewReplClient(primaryConnection)
-									secondaryConn := pb.NewReplClient(secondaryConnection)
-
-									var secondaries = [] *pb.PortIntroInfo{}
+								} else {
+									var secondaries = make([]*pb.PortIntroInfo, 0)
 									for secondary := range table[primaryKey] {
 										secondaries = append(secondaries, &pb.PortIntroInfo{ReplId:secondary})
 									}
 									secondaries = append(secondaries, standbyServer)
+									primaryConn := pb.NewReplClient(primaryConnection)
 
-									_, err := secondaryConn.MakeSecondary(context.Background(), &pb.PortIntroInfo{ReplId:primaryKey})
-									if err != nil {
-										log.Printf("Error while making sencondary %v, error %v", standbyServer.ReplId, err)
-									} else {
-										_, err := primaryConn.MakePrimary(context.Background(), &pb.SecondaryList{Secondaries:secondaries, RequestNumber:-1})
-										if err != nil{
-											log.Printf("Error while making primary %v, error %v", primaryKey, err)
-										}
+									_, err := primaryConn.MakePrimary(context.Background(), &pb.SecondaryList{Secondaries:secondaries, RequestNumber:-1})
+									if err != nil{
+										log.Printf("Error while making primary %v, error %v", primaryKey, err)
 									}
 
-									standbyServers = standbyServers[1:]
+									err = primaryConnection.Close()
+									if err != nil {
+										log.Printf("Error while closing primary connectionfor %v, error : %v", primaryKey, err)
+									} else {
+										log.Printf("Informing Secondary %v about it new primary %v", standbyServer.ReplId, primaryKey)
+										secondaryConnection, err2 := connect(standbyServer.ReplId)
+
+										if err2 != nil {
+											log.Printf("Not able to connect to %v, error %v", standbyServer.ReplId, err2)
+										} else {
+											secondaryConn := pb.NewReplClient(secondaryConnection)
+											_, err := secondaryConn.MakeSecondary(context.Background(), &pb.PortIntroInfo{ReplId:primaryKey})
+											if err != nil {
+												log.Printf("Error while making sencondary %v, error %v", standbyServer.ReplId, err)
+											} else {
+												standbyServers = standbyServers[1:]
+											}
+											err = secondaryConnection.Close()
+											if err != nil {
+												log.Printf("Error while closing secondary connection for %v, error : %v", standbyServer.ReplId, err)
+											}
+
+										}
+
+									}
 								}
-								err := primaryConnection.Close()
-								if err != nil {
-									log.Printf("Error while closing primary connectionfor %v, error : %v", primaryKey, err)
-								}
-								err = secondaryConnection.Close()
-								if err != nil {
-									log.Printf("Error while closing secondary connection for %v, error : %v", standbyServer.ReplId, err)
-								}
+
 							}
 						}
 					}
 				}
-				restartTimer(timer, r)
+				restartTimer(timer)
 
 
 			case portInfo := <- manage.InitChan:
@@ -210,7 +213,7 @@ func manage (manage *Manager, r *rand.Rand) {
 					for _, standbyServer := range standbyServers {
 						if standbyServer.ReplId == portInfo.arg.ReplId{
 							found = true
-							log.Printf("Found new server %v in standBy list. ot adding again.", portInfo.arg.ReplId)
+							log.Printf("Found new server %v in standBy list. not adding again.", portInfo.arg.ReplId)
 							break
 						}
 					}

@@ -6,10 +6,8 @@ import (
 	"fmt"
 	"google.golang.org/grpc"
 	"log"
-	"math/rand"
 	"net"
 	"os"
-	"time"
 )
 
 func main() {
@@ -55,9 +53,7 @@ func main() {
 
 	pb.RegisterManagerServer(s, &manager)
 
-	var r *rand.Rand
-	r = rand.New(rand.NewSource(time.Now().UnixNano()))
-	go manage(&manager, r)
+	go manage(&manager)
 
 	// Tell GRPC that s will be serving requests for the KvStore service and should use store (defined on line 23)
 	// as the struct whose methods should be called in response.
