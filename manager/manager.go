@@ -7,11 +7,16 @@ import (
 	"google.golang.org/grpc"
 	"log"
 	"time"
+	"strings"
+	"errors"
 )
+
+var primaryMapping = make(map[string] string) //prefix --> primary
+var replToTrieMapping = make(map[string] string)
 
 
 type PortIntroArgs struct {
-	arg *pb.PortIntroInfo
+	arg *pb.IntroInfo
 }
 
 type HeartbeatAckArgs struct {
@@ -23,22 +28,36 @@ type Manager struct {
 	HeartbeatAckChan chan HeartbeatAckArgs
 }
 
+func (r *Manager) GetTriePortInfo(ctx context.Context,arg *pb.Key) (*pb.PortInfo, error) {
+	var prefix = arg.Key
+	for p, id := range primaryMapping{
+		s := strings.Split(p, ":")
+		low, high := s[0], s[1]
+		if prefix >= low && prefix <= high {
+			trieIp, ok := replToTrieMapping[id]
+			if ok{
+				return &pb.PortInfo{ReplId:trieIp}, nil
+			} else {
+				return &pb.PortInfo{}, errors.New("could not find trie port")
+			}
+		}
+	}
+	return &pb.PortInfo{}, errors.New("could not find trie port")
+}
+
 func (r *Manager) HeartbeatAck(ctx context.Context, arg *pb.HeartbeatAckMessage) (*pb.Empty, error) {
 	r.HeartbeatAckChan <- HeartbeatAckArgs{arg:arg}
 	return &pb.Empty{}, nil
 }
 
-func (r *Manager) IntroduceSelf(ctx context.Context, arg *pb.PortIntroInfo) (*pb.Empty, error) {
+func (r *Manager) IntroduceSelf(ctx context.Context, arg *pb.IntroInfo) (*pb.Empty, error) {
 	r.InitChan <- PortIntroArgs{arg: arg}
 	return &pb.Empty{}, nil
 }
 
 func connect(repl string) (*grpc.ClientConn, error) {
 
-	backoffConfig := grpc.DefaultBackoffConfig
-	// Choose an aggressive backoff strategy here.
-	backoffConfig.MaxDelay = 500 * time.Millisecond
-	conn, err := grpc.Dial(repl, grpc.WithInsecure(), grpc.WithBackoffConfig(backoffConfig))
+	conn, err := grpc.Dial(repl, grpc.WithInsecure(), grpc.WithBlock(), grpc.WithTimeout(time.Duration(1000)*time.Millisecond))
 	// Ensure connection did not fail, which should not happen since this happens in the background
 	if err != nil {
 		return nil, err
@@ -63,10 +82,11 @@ func restartTimer(timer *time.Timer) {
 }
 
 
+
 func manage (manage *Manager) {
 
 
-	var primaryMapping = make(map[string] string) //prefix --> primary
+
 	var table = make(map[string] map[string] int64) // primary --> secondaries:lag_counts
 	var maxSecondaries = 1 //Max Secondary for each primary
 
@@ -75,7 +95,7 @@ func manage (manage *Manager) {
 
 
 	//StandBy Table
-	standbyServers := make([] *pb.PortIntroInfo, 0)
+	standbyServers := make([] *pb.PortInfo, 0)
 
 
 	timer := time.NewTimer(time.Duration(2000) * time.Millisecond)
@@ -95,7 +115,7 @@ func manage (manage *Manager) {
 
 
 				// Send heartbeat to primaries
-				for primary := range primaryHB{
+				/*for primary := range primaryHB{
 
 					log.Printf("Sending HeartBeat to %v", primary)
 					connection, err := connect(primary)
@@ -103,7 +123,7 @@ func manage (manage *Manager) {
 						log.Printf("Not able to connect to %v error - %v", primary, err)
 					} else {
 						conn := pb.NewReplClient(connection)
-						_, err := conn.Heartbeat(context.Background(), &pb.HeartbeatMessage{})
+						_, err := conn.Heartbeat(context.Background(), &pb.HeartbeatMessage{Id:"Main Manager"})
 						primaryHB[primary] += 1
 						if err != nil {
 							log.Printf("Error while establishing heartbeat connection %v", err)
@@ -117,7 +137,7 @@ func manage (manage *Manager) {
 						log.Printf("Error while closing primary connection %v, error : %v", primary, err)
 					}
 
-				}
+				}*/
 
 
 				// See if we can allocate standby servers
@@ -133,9 +153,7 @@ func manage (manage *Manager) {
 							log.Printf("Not able to connect to %v error - %v", standbyServer.ReplId, err)
 						} else {
 							conn := pb.NewReplClient(connection)
-							var secondariesList = make([] *pb.PortIntroInfo,0)
-
-							_, err := conn.MakePrimary(context.Background(), &pb.SecondaryList{Secondaries:secondariesList,RequestNumber:0})
+							_, err := conn.MakePrimary(context.Background(), &pb.PrimaryInitMessage{RequestNumber:0})
 							if err != nil {
 								log.Printf("Error while calling Make Primary RPC for %v, error - %v", standbyServer.ReplId, err)
 							}
@@ -153,8 +171,6 @@ func manage (manage *Manager) {
 
 					}
 
-
-
 					// Allocate standbys to secondaries if less than the expected
 					for primaryKey := range table{
 						log.Printf("Primary %v has %v secondaries, max secondaries = %v", primaryKey, len(table[primaryKey]), maxSecondaries)
@@ -169,13 +185,9 @@ func manage (manage *Manager) {
 									log.Printf("Not able to connect to %v, error %v", standbyServer.ReplId, err1)
 								} else {
 
-									var secondaries = make([]*pb.PortIntroInfo, 0)
-									for secondary := range table[primaryKey] {
-										secondaries = append(secondaries, &pb.PortIntroInfo{ReplId:secondary})
-									}
-									secondaries = append(secondaries, standbyServer)
 									primaryConn := pb.NewReplClient(primaryConnection)
-									_, err := primaryConn.MakePrimary(context.Background(), &pb.SecondaryList{Secondaries:secondaries, RequestNumber:-1})
+									//_, err := primaryConn.AddSecondaryToPrimaryList(context.Background(), &pb.AddSecondaryMessage{SecondaryId:standbyServer})
+									_, err := primaryConn.AddSecondaryToPrimaryList(context.Background(), &pb.AddSecondaryMessage{SecondaryId:standbyServer})
 									if err != nil{
 										log.Printf("Error while updating primary %v about new secondary %v, error %v", primaryKey, standbyServer.ReplId, err)
 									} else {
@@ -191,7 +203,7 @@ func manage (manage *Manager) {
 												log.Printf("Not able to connect to %v, error %v", standbyServer.ReplId, err2)
 											} else {
 												secondaryConn := pb.NewReplClient(secondaryConnection)
-												_, err := secondaryConn.MakeSecondary(context.Background(), &pb.PortIntroInfo{ReplId:primaryKey})
+												_, err := secondaryConn.MakeSecondary(context.Background(), &pb.PortInfo{ReplId:primaryKey})
 												if err != nil {
 													log.Printf("Error while making sencondary %v, error %v", standbyServer.ReplId, err)
 												} else {
@@ -215,7 +227,9 @@ func manage (manage *Manager) {
 
 
 			case portInfo := <- manage.InitChan:
-				log.Printf("Received Introduction message from : %v", portInfo.arg.ReplId)
+				log.Printf("Received Introduction message from : %v with trie port : %v", portInfo.arg.ReplId, portInfo.arg.TrieId)
+				replToTrieMapping[portInfo.arg.ReplId] = portInfo.arg.TrieId
+
 				connection,err := connect(portInfo.arg.ReplId)
 				if err != nil {
 					log.Printf("Not able to connect to %v, error : %v", portInfo.arg.ReplId, err)
@@ -231,7 +245,7 @@ func manage (manage *Manager) {
 					}
 
 					if !found {
-						standbyServers = append(standbyServers, portInfo.arg)
+						standbyServers = append(standbyServers, &pb.PortInfo{ReplId:portInfo.arg.ReplId})
 					}
 					log.Printf("Sending Ack to StandBy %v", portInfo.arg.ReplId)
 

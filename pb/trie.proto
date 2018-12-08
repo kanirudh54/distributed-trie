@@ -36,15 +36,6 @@ message Result {
     Success s = 2;
 }
 
-// Trie service
-service TrieStore {
-    // Get the value associated with a key.
-    //rpc Init(controlRequest) returns (Empty) {}
-    rpc Get (Key) returns (Result) {}
-    rpc Set (Key) returns (Result) {}
-    //rpc Clear(Empty) returns (Result) {}
-}
-
 // Internal representations for operations.
 enum Op {
     GET = 0;
@@ -93,8 +84,13 @@ message controlRequest{
 	string primaryId = 2;
 }
 
-message portIntroInfo{
+message portInfo{
     string replId = 1;
+}
+
+message introInfo{
+    string replId = 1;
+    string trieId = 2;
 }
 
 message ackIntroInfo{
@@ -102,22 +98,30 @@ message ackIntroInfo{
 }
 
 message heartbeatMessage{
+    string id = 1;
 }
 
 
 message heartbeatAckArg{
-    portIntroInfo key = 1;
+    portInfo key = 1;
     int64 val = 2;
 }
 
 message heartbeatAckMessage{
-    portIntroInfo id = 1;
+    portInfo id = 1;
     repeated heartbeatAckArg table = 2;
 }
 
-message secondaryList{
-    repeated portIntroInfo secondaries = 1;
-    int64 requestNumber = 2;
+message primaryInitMessage{
+    int64 requestNumber = 1;
+}
+
+message addSecondaryMessage{
+    portInfo secondaryId = 1;
+}
+
+message deleteSecondaryMessage{
+    portInfo secondaryId = 1;
 }
 
 
@@ -132,14 +136,29 @@ service Repl {
 
     rpc Heartbeat(heartbeatMessage) returns (Empty) {} // Heartbeat from Manager to Primary
 
-    rpc MakePrimary(secondaryList) returns (Empty) {}
-    rpc MakeSecondary(portIntroInfo) returns (Empty) {}
+    rpc MakePrimary(primaryInitMessage) returns (Empty) {}
+    rpc MakeSecondary(portInfo) returns (Empty) {}
+
+
+    rpc DeleteSecondaryFromPrimaryList(deleteSecondaryMessage) returns (Empty) {}
+    rpc AddSecondaryToPrimaryList(addSecondaryMessage) returns (Empty) {}
 }
 
 //Manager Service
 service Manager {
 
-    rpc IntroduceSelf(portIntroInfo) returns (Empty) {} // Introduce standby to manager
+    rpc IntroduceSelf(introInfo) returns (Empty) {} // Introduce standby to manager
     rpc HeartbeatAck(heartbeatAckMessage) returns (Empty) {} // Ack for heartbeat from primary to manager
 
+    rpc getTriePortInfo(Key) returns (portInfo) {}
+
+}
+
+// Trie service
+service TrieStore {
+    // Get the value associated with a key.
+    //rpc Init(controlRequest) returns (Empty) {}
+    rpc Get (Key) returns (Result) {}
+    rpc Set (Key) returns (Result) {}
+    //rpc Clear(Empty) returns (Result) {}
 }

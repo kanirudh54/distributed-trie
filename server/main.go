@@ -29,7 +29,7 @@ func main() {
 		"Port on which server should listen to client requests")
 	flag.IntVar(&replPort, "raft", 3001,
 		"Port on which server should listen to Raft requests")
-	flag.IntVar(&managerPort, "manager", 4000,
+	flag.IntVar(&managerPort, "manager", 9999,
 		"Port on which Repl Manager runs")
 
 	flag.Parse()
@@ -79,9 +79,9 @@ func main() {
 
 	store := TrieStore{C: make(chan InputChannelType), root: createTrieNode()}
 
-	go serve(&store, r, id, replPort, managerPortString)
+	go serve(&store, r, id, replPort, clientPort, managerPortString)
 
-	// Tell GRPC that s will be serving requests for the KvStore service and should use store (defined on line 23)
+	// Tell GRPC that store will be serving requests for the KvStore service and should use store (defined on line 23)
 	// as the struct whose methods should be called in response.
 	pb.RegisterTrieStoreServer(s, &store)
 	log.Printf("Going to listen on port %v", clientPort)

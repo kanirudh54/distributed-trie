@@ -57,6 +57,7 @@ func (pq *PriorityQueue) Pop() interface{} {
 }
 
 // update modifies the priority and value of an Item in the queue.
+// update modifies the priority and value of an Item in the queue.
 func (pq *PriorityQueue) update(item *Result, value string, priority int64) {
 	item.word = value
 	item.count = priority
@@ -74,7 +75,15 @@ func createTrieNode() *Trie{
 	return &trie
 }
 
-func updateTrie(t * Trie, word string){
+func createTrie(results[] Result) *Trie {
+	var root = createTrieNode()
+	for _, result := range results {
+		updateTrie(root, result.word, result.count)
+	}
+	return root
+}
+
+func updateTrie(t * Trie, word string, count int64){
 	var current = t
 
 	var parents []*Trie
@@ -96,7 +105,7 @@ func updateTrie(t * Trie, word string){
 		}
 	}
 	current.isEnd = true
-	current.count+=1
+	current.count+=count
 }
 
 func autoComplete(t * Trie, prefix string) [] Result {
@@ -204,17 +213,19 @@ func getSplitPoint(root* Trie, num int, prefix string) SplitResult {
 	if root == nil{
 		return SplitResult{prefix:prefix, node:root}
 	}
-	var total = 0
+
 	for idx, child := range root.children {
 		if child != nil {
-			total += int(child.totalWords)
-			fmt.Printf("\n At %s with count %v num %v", prefix+string(idx), total, num)
-			if total == num {
+			fmt.Printf("\n At %s with count %v num %v", prefix+string(idx), int(child.totalWords), num)
+			if num == 0 && child.isEnd {
 				return SplitResult{prefix:prefix + string(idx), node:child}
-			} else if total > num {
-				total -= int(child.totalWords)
-				num -= total
+			} else if int(child.totalWords) > num {
+				if child.isEnd {
+					num -= 1
+				}
 				return getSplitPoint(child, num, prefix + string(idx))
+			} else {
+				num -= int(child.totalWords)
 			}
 		}
 	}
@@ -272,7 +283,6 @@ func splitRight(root * Trie, split * Trie, found *bool) * Trie {
 
 	return newRoot
 }
-
 
 
 
@@ -352,7 +362,7 @@ func (s *TrieStore) GetInternal(k string) pb.Result {
 func (s *TrieStore) SetInternal(k string) pb.Result {
 
 	var suggestions [] string
-	updateTrie(s.root, k)
+	updateTrie(s.root, k, 1)
 	return pb.Result{Suggestions: suggestions, S: &pb.Success{}}
 
 }

@@ -53,6 +53,7 @@ func main() {
 
 	pb.RegisterManagerServer(s, &manager)
 
+
 	go manage(&manager)
 
 	// Tell GRPC that s will be serving requests for the KvStore service and should use store (defined on line 23)

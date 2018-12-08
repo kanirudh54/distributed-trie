@@ -37,12 +37,22 @@ type HeartbeatArgs struct {
 }
 
 type MakePrimaryArgs struct {
-	arg *pb.SecondaryList
+	arg *pb.PrimaryInitMessage
 }
 
 type MakeSecondaryArgs struct {
-	arg *pb.PortIntroInfo
+	arg *pb.PortInfo
 }
+
+type AddSecondaryArgs struct {
+	arg *pb.AddSecondaryMessage
+}
+
+type DeleteSecondaryArgs struct {
+	arg *pb.DeleteSecondaryMessage
+}
+
+
 
 // Struct off of which we shall hang the Raft service
 type Repl struct {
@@ -53,15 +63,27 @@ type Repl struct {
 	RequestChan chan RequestArgs
 	ReplyChan   chan ReplyArgs
 	HeartbeatChan chan HeartbeatArgs
+	AddSecondaryChan chan AddSecondaryArgs
+	DeleteSecondaryChan chan DeleteSecondaryArgs
 
 }
 
-func (r *Repl) MakePrimary(ctx context.Context, arg *pb.SecondaryList) (*pb.Empty, error) {
+func (r *Repl) DeleteSecondaryFromPrimaryList(ctx context.Context, arg *pb.DeleteSecondaryMessage) (*pb.Empty, error) {
+	r.DeleteSecondaryChan <- DeleteSecondaryArgs{arg:arg}
+	return &pb.Empty{}, nil
+}
+
+func (r *Repl) AddSecondaryToPrimaryList(ctx context.Context, arg *pb.AddSecondaryMessage) (*pb.Empty, error) {
+	r.AddSecondaryChan <- AddSecondaryArgs{arg:arg}
+	return &pb.Empty{}, nil
+}
+
+func (r *Repl) MakePrimary(ctx context.Context, arg *pb.PrimaryInitMessage) (*pb.Empty, error) {
 	r.MakePrimaryChan <- MakePrimaryArgs{arg:arg}
 	return &pb.Empty{}, nil
 }
 
-func (r *Repl) MakeSecondary(ctx context.Context, arg *pb.PortIntroInfo) (*pb.Empty, error) {
+func (r *Repl) MakeSecondary(ctx context.Context, arg *pb.PortInfo) (*pb.Empty, error) {
 	r.MakeSecondaryChan <- MakeSecondaryArgs{arg:arg}
 	return &pb.Empty{}, nil
 }
@@ -131,15 +153,12 @@ func RunReplServer(r *Repl, port int) {
 }
 
 func connectToPeer(peer string) (*grpc.ClientConn, error) {
-	backoffConfig := grpc.DefaultBackoffConfig
-	// Choose an aggressive backoff strategy here.
-	backoffConfig.MaxDelay = 500 * time.Millisecond
-	conn, err := grpc.Dial(peer, grpc.WithInsecure(), grpc.WithBackoffConfig(backoffConfig))
+	conn, err := grpc.Dial(peer, grpc.WithInsecure())
 	return conn, err
 }
 
 // The main service loop. All modifications to the Trie are run through here.
-func serve(s *TrieStore, r *rand.Rand, id string, replPort int, managerPortString string) {
+func serve(s *TrieStore, r *rand.Rand, id string, replPort int, triePort int, managerPortString string) {
 
 	repl := Repl{
 		RequestChan: make(chan RequestArgs),
@@ -148,6 +167,8 @@ func serve(s *TrieStore, r *rand.Rand, id string, replPort int, managerPortStrin
 		HeartbeatChan : make(chan HeartbeatArgs),
 		MakePrimaryChan : make(chan MakePrimaryArgs),
 		MakeSecondaryChan : make(chan MakeSecondaryArgs),
+		AddSecondaryChan: make(chan AddSecondaryArgs),
+		DeleteSecondaryChan: make(chan DeleteSecondaryArgs),
 	}
 
 
@@ -156,11 +177,11 @@ func serve(s *TrieStore, r *rand.Rand, id string, replPort int, managerPortStrin
 
 	// Peer state
 	type SecondaryGlobalState struct {
-		requests map[int64]string
+		requests map[int64]string // For each secondary number, request number to word : Maintained by primary only
 	}
 	// Current node's state
 	type SecondaryLocalState struct {
-		completed map[int64]bool
+		completed map[int64]bool // For each request Number of completed or not : maintained by secondary only
 	}
 
 	secondaryGlobalStates := make(map[string] *SecondaryGlobalState)
@@ -190,38 +211,21 @@ func serve(s *TrieStore, r *rand.Rand, id string, replPort int, managerPortStrin
 		}
 
 		select {
+
+
 			case prim := <- repl.MakePrimaryChan:
 				// When manager calls MakePrimary
 				if role != Primary {
-					secondaryGlobalStates = make(map[string]*SecondaryGlobalState)
-					for _, secondary := range prim.arg.Secondaries{
-						secondaryGlobalStates[secondary.ReplId] = &SecondaryGlobalState{make(map[int64]string)}
-						log.Printf("Added %v to Secondary map of primary %v", secondary.ReplId, id)
-					}
-				} else {
-					for _, secondary := range prim.arg.Secondaries{
-						if _, ok := secondaryGlobalStates[secondary.ReplId]; ok {
-							//Already Exists
-						} else {
-							secondaryGlobalStates[secondary.ReplId] = &SecondaryGlobalState{make(map[int64]string)}
-						}
-						secondaryGlobalStates[secondary.ReplId] = &SecondaryGlobalState{make(map[int64]string)}
-						log.Printf("Added %v to Secondary map of primary %v", secondary.ReplId, id)
-					}
-					//Remoce Intersection
-				}
-				//We update our connections to secondaries
-
-				if prim.arg.RequestNumber < 0{
-					if role == Primary {
-						//Dont change Req Number
-					} else if role == Secondary {
+					if role == Secondary {
 						requestNumber = int64(len(secondaryLocalState.completed))
+					} else if role == StandBy {
+						requestNumber = prim.arg.RequestNumber
 					}
 				} else {
-					requestNumber = prim.arg.RequestNumber
+					log.Printf("I am already Primary. Don't need to change")
 				}
-
+				//We Update Tables
+				secondaryGlobalStates = make(map[string]*SecondaryGlobalState)
 				secondaryLocalState = SecondaryLocalState{make(map[int64]bool)}
 				role = Primary
 
@@ -242,7 +246,7 @@ func serve(s *TrieStore, r *rand.Rand, id string, replPort int, managerPortStrin
 							log.Printf("Error while connecting to manager %v from %v error - %v", managerPortString, id, err)
 						} else {
 							manager := pb.NewManagerClient(conn)
-							_, err := manager.IntroduceSelf(context.Background(), &pb.PortIntroInfo{ReplId: "127.0.0.1:" + fmt.Sprintf("%v", replPort)})
+							_, err := manager.IntroduceSelf(context.Background(), &pb.IntroInfo{ReplId: "127.0.0.1:" + fmt.Sprintf("%v", replPort), TrieId: "127.0.0.1:" + fmt.Sprintf("%v", triePort)})
 							if err != nil {
 								log.Printf("Error while introducing self to Manager : %v", err)
 							}
@@ -309,10 +313,12 @@ func serve(s *TrieStore, r *rand.Rand, id string, replPort int, managerPortStrin
 					}
 				}
 
-			case  <- repl.HeartbeatChan:
+			case  hb := <- repl.HeartbeatChan:
 				// when manager sends heartbeat to Primary
 				if role == Primary {
 					var k = pb.HeartbeatAckMessage{}
+
+					log.Printf("Message from Manager : %v", hb.arg.Id)
 
 					for secondaryId,secondaryGlobalState := range secondaryGlobalStates {
 
@@ -323,19 +329,19 @@ func serve(s *TrieStore, r *rand.Rand, id string, replPort int, managerPortStrin
 							l = len(secondaryGlobalState.requests)
 						}
 
-						t.Key = &pb.PortIntroInfo{ReplId: secondaryId}
+						t.Key = &pb.PortInfo{ReplId: secondaryId}
 						t.Val = int64(l)
 						k.Table = append(k.Table, &t)
 					}
 
-					k.Id = &pb.PortIntroInfo{ReplId: id}
-					conn, err := grpc.Dial(managerPortString, grpc.WithInsecure())
+					k.Id = &pb.PortInfo{ReplId: id}
+					conn, err := grpc.Dial(managerPortString, grpc.WithInsecure(), grpc.WithBlock(), grpc.WithTimeout(time.Duration(1000)*time.Millisecond))
 					if err != nil {
 						log.Printf("Error while connecting to manager %v from %v error - %v", managerPortString, id, err)
 					} else {
 						manager := pb.NewManagerClient(conn)
 						_, err := manager.HeartbeatAck(context.Background(), &k)
-						//_, err := manager.HeartbeatAck(context.Background(),&pb.HeartbeatAckMessage{})
+
 						if err != nil {
 							log.Printf("Error while sending heartbeat ack to manager error : %v", err)
 						}
@@ -381,6 +387,15 @@ func serve(s *TrieStore, r *rand.Rand, id string, replPort int, managerPortStrin
 					}
 				}
 
+			case addSec := <- repl.AddSecondaryChan:
+				log.Printf("Adding Secondary %v to list of primary %v", addSec.arg.SecondaryId.ReplId, id)
+				sec := SecondaryGlobalState{requests:make(map[int64] string)}
+				secondaryGlobalStates[addSec.arg.SecondaryId.ReplId] = &sec
+				//TODO : Update this secondary from me !! Write this function
+
+			case delSec := <- repl.DeleteSecondaryChan:
+				log.Printf("Deleting Secondary %v from list of primary %v", delSec.arg.SecondaryId.ReplId, id)
+				delete(secondaryGlobalStates, delSec.arg.SecondaryId.ReplId)
 
 		}
 	}
