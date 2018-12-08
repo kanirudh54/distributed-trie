@@ -124,6 +124,20 @@ message deleteSecondaryMessage{
     portInfo secondaryId = 1;
 }
 
+message SplitWord{
+    string word = 1;
+    int64 count = 2;
+    int64 index = 3;
+}
+
+message SplitWordRequest{
+    repeated SplitWord words = 1;
+    string id = 2;
+}
+
+message MaxTrieSize{
+    int64 length = 1;
+}
 
 
 
@@ -142,6 +156,8 @@ service Repl {
 
     rpc DeleteSecondaryFromPrimaryList(deleteSecondaryMessage) returns (Empty) {}
     rpc AddSecondaryToPrimaryList(addSecondaryMessage) returns (Empty) {}
+
+
 }
 
 //Manager Service
@@ -152,13 +168,25 @@ service Manager {
 
     rpc getTriePortInfo(Key) returns (portInfo) {}
 
+
+    //Split Trie RPCs
+    rpc splitTrieRequest(portInfo) returns (Empty) {} // Message 1
+    rpc splitTrieListRequest(SplitWordRequest) returns (Empty) {} //Message 3
+    rpc splitTrieCreatedAck (portInfo) returns (Empty) {} //Message 5
+
+
 }
 
 // Trie service
 service TrieStore {
     // Get the value associated with a key.
-    //rpc Init(controlRequest) returns (Empty) {}
+
     rpc Get (Key) returns (Result) {}
     rpc Set (Key) returns (Result) {}
-    //rpc Clear(Empty) returns (Result) {}
+
+    rpc CheckSplit(MaxTrieSize) returns (Empty) {} //Message 0
+    rpc AckSplitTrieRequest(Empty) returns (Empty) {} //Message 2
+    rpc Create(SplitWordRequest) returns (Empty) {} //Message 4
+    rpc splitTrieCreatedAck (Empty) returns (Empty) {} // Message 6
+
 }

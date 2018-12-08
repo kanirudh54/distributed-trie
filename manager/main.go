@@ -48,6 +48,10 @@ func main() {
 	manager := Manager{
 		InitChan: make(chan PortIntroArgs),
 		HeartbeatAckChan: make(chan HeartbeatAckArgs),
+		SplitTrieRequestChan: make(chan SplitTrieRequestArgs),
+		SplitWordsChan: make(chan SplitWordRequestArgs),
+		SplitTrieRequestAckChan: make(chan SplitTrieRequestAckArgs),
+		DoneSplitAckChan: make(chan string),
 	}
 
 

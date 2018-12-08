@@ -77,7 +77,7 @@ func main() {
 
 	// Initialize KVStore
 
-	store := TrieStore{C: make(chan InputChannelType), root: createTrieNode()}
+	store := TrieStore{C: make(chan InputChannelType), root: createTrieNode(), manager: managerPortString, id: fmt.Sprintf("%s:%d", name, clientPort)}
 
 	go serve(&store, r, id, replPort, clientPort, managerPortString)
 

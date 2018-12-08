@@ -6,6 +6,7 @@ import (
 	_ "container/heap"
 	"fmt"
 	"golang.org/x/net/context"
+	"google.golang.org/grpc"
 	"log"
 	"math"
 )
@@ -124,7 +125,7 @@ func autoComplete(t * Trie, prefix string) [] Result {
 	}
 
 	var result = traverseTrie(temp)
-	for index, _ := range result {
+	for index := range result {
 		result[index].word = prefix + result[index].word
 	}
 	return result
@@ -138,7 +139,7 @@ func traverseTrie(t* Trie) [] Result{
 		return result
 	}
 
-	if(current.isEnd){
+	if current.isEnd{
 		result = append(result, Result{word:"", count:current.count})
 	}
 
@@ -232,57 +233,6 @@ func getSplitPoint(root* Trie, num int, prefix string) SplitResult {
 	return SplitResult{prefix:"", node:nil}
 }
 
-func splitLeft(root * Trie, split * Trie, found *bool) * Trie {
-	if root == nil {
-		return nil
-	}
-
-	var newRoot = createTrieNode()
-	var total = 0
-	for idx, child := range root.children {
-		if !*found {
-			newRoot.children[idx] = splitLeft(child, split, found)
-			if newRoot.children[idx] != nil {
-				total += int(newRoot.children[idx].totalWords)
-			}
-		}
-
-		if child == split {
-			*found = true
-		}
-	}
-	newRoot.totalWords = int64(total)
-	newRoot.isEnd = root.isEnd
-	newRoot.count = root.count
-
-	return newRoot
-}
-
-func splitRight(root * Trie, split * Trie, found *bool) * Trie {
-	if root == nil {
-		return nil
-	}
-
-	var newRoot = createTrieNode()
-	var total = 0
-	for idx, child := range root.children {
-		if *found {
-			newRoot.children[idx] = splitRight(child, split, found)
-			if newRoot.children[idx] != nil {
-				total += int(newRoot.children[idx].totalWords)
-			}
-		}
-
-		if child == split {
-			*found = true
-		}
-	}
-	newRoot.totalWords = int64(total)
-	newRoot.isEnd = root.isEnd
-	newRoot.count = root.count
-
-	return newRoot
-}
 
 
 
@@ -297,6 +247,104 @@ type InputChannelType struct {
 type TrieStore struct {
 	C     chan InputChannelType
 	root *Trie //Initialize this
+	manager string
+	id string
+}
+
+func (s *TrieStore) CheckSplit(ctx context.Context, arg *pb.MaxTrieSize) (*pb.Empty, error) {
+	go func() {
+		if s.root.totalWords > arg.Length {
+			conn, err := grpc.Dial(s.manager, grpc.WithInsecure())
+			if err != nil {
+				log.Printf("Error while connecting to manager %v from Trie error - %v", s.manager, err)
+			} else {
+				manager := pb.NewManagerClient(conn)
+				_, err := manager.SplitTrieRequest(context.Background(), &pb.PortInfo{ReplId: s.id})
+				if err != nil {
+					log.Printf("Error while sending Split Words list to manager : %v", err)
+				}
+				err = conn.Close()
+				if err != nil {
+					log.Printf("Error while closing connection to manager - %v", err)
+				}
+			}
+		}
+	}()
+	return &pb.Empty{}, nil
+}
+
+var results = make([] Result, 0)
+
+func (s *TrieStore) AckSplitTrieRequest(ctx context.Context, arg *pb.Empty) (*pb.Empty, error) {
+
+	go func() {
+		results = autoComplete(s.root, "")
+		conn, err := grpc.Dial(s.manager, grpc.WithInsecure())
+		if err != nil {
+			log.Printf("Error while connecting to manager %v from Trie error - %v", s.manager, err)
+		} else {
+			manager := pb.NewManagerClient(conn)
+			var splitNumber= int(s.root.totalWords / 2)
+			var list= results[splitNumber+1:]
+			results = results[:splitNumber+1]
+
+			var splitWords= make([] *pb.SplitWord, 0)
+			for _, result := range list {
+				splitWords = append(splitWords, &pb.SplitWord{Word: result.word, Count: result.count, Index: int64(result.index)})
+			}
+
+			var request= pb.SplitWordRequest{Words: splitWords, Id:s.id}
+
+			_, err := manager.SplitTrieListRequest(context.Background(), &request)
+			if err != nil {
+				log.Printf("Error while sending Split Words list to manager : %v", err)
+			}
+			err = conn.Close()
+			if err != nil {
+				log.Printf("Error while closing connection to manager - %v", err)
+			}
+		}
+	}()
+
+	return &pb.Empty{}, nil
+
+}
+
+func (s *TrieStore) Create(ctx context.Context, arg *pb.SplitWordRequest) (*pb.Empty, error) {
+
+	go func() {
+		var result= make([] Result, 0)
+		for _, word := range arg.Words {
+			result = append(result, Result{word: word.Word, count: word.Count, index: int(word.Index)})
+		}
+		s.root = createTrie(result)
+
+		conn, err := grpc.Dial(s.manager, grpc.WithInsecure())
+		if err != nil {
+			log.Printf("Error while connecting to manager %v from Trie error - %v", s.manager, err)
+		} else {
+			manager := pb.NewManagerClient(conn)
+			_, err := manager.SplitTrieCreatedAck(context.Background(), &pb.PortInfo{ReplId: arg.Id})
+			if err != nil {
+				log.Printf("Error while sending Split Words list to manager : %v", err)
+			}
+			err = conn.Close()
+			if err != nil {
+				log.Printf("Error while closing connection to manager - %v", err)
+			}
+		}
+	}()
+
+	return &pb.Empty{}, nil
+
+}
+
+func (s *TrieStore) SplitTrieCreatedAck(ctx context.Context, arg *pb.Empty) (*pb.Empty, error) {
+	go func() {
+		s.root = createTrie(results)
+		results = make([] Result, 0)
+	}()
+	return &pb.Empty{}, nil
 }
 
 func (s *TrieStore) Get(ctx context.Context, key *pb.Key) (*pb.Result, error) {
@@ -325,20 +373,6 @@ func (s *TrieStore) Set(ctx context.Context, in *pb.Key) (*pb.Result, error) {
 	return &result, nil
 }
 
-/*
-func (s *KVStore) Clear(ctx context.Context, in *pb.Empty) (*pb.Result, error) {
-	// Create a channel
-	c := make(chan pb.Result)
-	// Create a request
-	r := pb.Command{Operation: pb.Op_CLEAR, Arg: &pb.Command_Clear{Clear: in}}
-	// Send request over the channel
-	s.C <- InputChannelType{command: r, response: c}
-	log.Printf("Waiting for clear response")
-	result := <-c
-	// The bit below works because Go maps return the 0 value for non existent keys, which is empty in this case.
-	return &result, nil
-}
-*/
 
 
 // Used internally to generate a result for a get request. This function assumes that it is called from a single thread of
