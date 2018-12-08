@@ -250,14 +250,14 @@ func serve(s *TrieStore, r *rand.Rand, id string, replPort int, triePort int, ma
 							if err != nil {
 								log.Printf("Error while introducing self to Manager : %v", err)
 							}
-							manager = nil
-						}
-
-						err = conn.Close()
-						if err != nil {
-							log.Printf("Error while closing connection to manager - %v", err)
+							err = conn.Close()
+							if err != nil {
+								log.Printf("Error while closing connection to manager - %v", err)
+							}
 						}
 					}
+				} else if role == Primary {
+					//TODO : Send pending requests to Secondary again
 				}
 				restartTimer(timer, r)
 
@@ -290,16 +290,18 @@ func serve(s *TrieStore, r *rand.Rand, id string, replPort int, triePort int, ma
 								go func(c pb.ReplClient, p string) {
 									_, err := c.UpdateSecondary(context.Background(), &pb.UpdateSecondaryTrieRequest{Word: word, RequestNumber: requestNumber})
 									if err != nil {
-										log.Printf("Unable to replicate request number %v to secondary %v with error %v, will update inext time.", requestNumber, p, err)
+										log.Printf("Unable to replicate request number %v to secondary %v with error %v, will update next time.", requestNumber, p, err)
+									}
+
+									err = conn.Close()
+									if err != nil {
+										log.Printf("Error while closing connection between %v and %v : %v", id, secondaryId, err)
 									}
 								}(secondaryConnection, secondaryId)
 								log.Printf("Sent ReplicateReq (%v,%v) deom %v to %v", requestNumber, word, primaryId, secondaryId)
 
 							}
-							err = conn.Close()
-							if err != nil {
-								log.Printf("Error while closing connection between %v and %v : %v", id, secondaryId, err)
-							}
+
 						}
 					}
 				}
@@ -345,11 +347,11 @@ func serve(s *TrieStore, r *rand.Rand, id string, replPort int, triePort int, ma
 						if err != nil {
 							log.Printf("Error while sending heartbeat ack to manager error : %v", err)
 						}
-						manager = nil
-					}
-					err = conn.Close()
-					if err != nil {
-						log.Printf("Error while closing connection to manager - %v", err)
+
+						err = conn.Close()
+						if err != nil {
+							log.Printf("Error while closing connection to manager - %v", err)
+						}
 					}
 				} else {
 					log.Printf("I am not primary, my status is %v, disregarding heartbeat", role)
@@ -379,10 +381,10 @@ func serve(s *TrieStore, r *rand.Rand, id string, replPort int, triePort int, ma
 							} else {
 								log.Printf("Sent Ack to primary %v from %v", primaryId, id)
 							}
-						}
-						err = conn.Close()
-						if err != nil {
-							log.Printf("Error while closing connection between %v and %v : %v", id, primaryId, err)
+							err = conn.Close()
+							if err != nil {
+								log.Printf("Error while closing connection between %v and %v : %v", id, primaryId, err)
+							}
 						}
 					}
 				}

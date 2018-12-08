@@ -131,7 +131,7 @@ message deleteSecondaryMessage{
 // Replication service
 service Repl {
     rpc AckIntroduction(ackIntroInfo) returns (Empty) {} // Ack for Introduce StandBy
-	rpc UpdateSecondary(updateSecondaryTrieRequest) returns (Empty)	{} // Updating Secondary Trie Node with singke query
+	rpc UpdateSecondary(updateSecondaryTrieRequest) returns (Empty)	{} // Updating Secondary Trie Node with single query
 	rpc AckPrimary(updateSecondaryTrieReply) returns (Empty) {} // Ack from Secondary to Primary for trie update
 
     rpc Heartbeat(heartbeatMessage) returns (Empty) {} // Heartbeat from Manager to Primary
