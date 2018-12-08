@@ -67,8 +67,7 @@ func main() {
 	managerPortString := fmt.Sprintf(":%d", managerPort)
 	log.Printf("Connecting to %v", managerPortString)
 	// Connect to the server. We use WithInsecure since we do not configure https in this class.
-	conn, err := grpc.Dial(managerPortString, grpc.WithInsecure())
-	manager := pb.NewManagerClient(conn)
+
 	//Ensure connection did not fail.
 	if err != nil {
 		log.Fatalf("Failed to dial GRPC repl server_1 %v", err)
@@ -80,7 +79,7 @@ func main() {
 
 	store := TrieStore{C: make(chan InputChannelType), root: createTrieNode()}
 
-	go serve(&store, r, id, replPort, manager)
+	go serve(&store, r, id, replPort, managerPortString)
 
 	// Tell GRPC that s will be serving requests for the KvStore service and should use store (defined on line 23)
 	// as the struct whose methods should be called in response.

@@ -92,6 +92,8 @@ func manage (manage *Manager) {
 				log.Printf("Timer went off")
 				log.Printf("Number of Primary Servers : %v", len(primaryHB))
 				log.Printf("Number of StandBy Servers : %v", len(standbyServers))
+
+
 				// Send heartbeat to primaries
 				for primary := range primaryHB{
 
@@ -107,12 +109,17 @@ func manage (manage *Manager) {
 							log.Printf("Error while establishing heartbeat connection %v", err)
 						}
 						//TODO Handle primary failure if count > 3
+						conn = nil
+
 					}
 					err = connection.Close()
 					if err != nil {
 						log.Printf("Error while closing primary connection %v, error : %v", primary, err)
 					}
+
 				}
+
+
 				// See if we can allocate standby servers
 				if len(standbyServers) > 0 {
 					log.Printf("Have %v servers in StandBy", len(standbyServers))
@@ -126,7 +133,7 @@ func manage (manage *Manager) {
 							log.Printf("Not able to connect to %v error - %v", standbyServer.ReplId, err)
 						} else {
 							conn := pb.NewReplClient(connection)
-							var secondariesList = [] *pb.PortIntroInfo{}
+							var secondariesList = make([] *pb.PortIntroInfo,0)
 
 							_, err := conn.MakePrimary(context.Background(), &pb.SecondaryList{Secondaries:secondariesList,RequestNumber:0})
 							if err != nil {
@@ -136,6 +143,8 @@ func manage (manage *Manager) {
 							primaryMapping["a:z"] = standbyServer.ReplId //Updating Prefix Mapping
 							table[standbyServer.ReplId] = make(map[string] int64)
 							standbyServers = standbyServers[1:]
+							conn = nil
+
 						}
 						err = connection.Close()
 						if err!=nil {
@@ -143,6 +152,9 @@ func manage (manage *Manager) {
 						}
 
 					}
+
+
+
 					// Allocate standbys to secondaries if less than the expected
 					for primaryKey := range table{
 						log.Printf("Primary %v has %v secondaries, max secondaries = %v", primaryKey, len(table[primaryKey]), maxSecondaries)
@@ -156,42 +168,42 @@ func manage (manage *Manager) {
 								if err1 != nil {
 									log.Printf("Not able to connect to %v, error %v", standbyServer.ReplId, err1)
 								} else {
+
 									var secondaries = make([]*pb.PortIntroInfo, 0)
 									for secondary := range table[primaryKey] {
 										secondaries = append(secondaries, &pb.PortIntroInfo{ReplId:secondary})
 									}
 									secondaries = append(secondaries, standbyServer)
 									primaryConn := pb.NewReplClient(primaryConnection)
-
 									_, err := primaryConn.MakePrimary(context.Background(), &pb.SecondaryList{Secondaries:secondaries, RequestNumber:-1})
 									if err != nil{
-										log.Printf("Error while making primary %v, error %v", primaryKey, err)
-									}
-
-									err = primaryConnection.Close()
-									if err != nil {
-										log.Printf("Error while closing primary connectionfor %v, error : %v", primaryKey, err)
+										log.Printf("Error while updating primary %v about new secondary %v, error %v", primaryKey, standbyServer.ReplId, err)
 									} else {
-										log.Printf("Informing Secondary %v about it new primary %v", standbyServer.ReplId, primaryKey)
-										secondaryConnection, err2 := connect(standbyServer.ReplId)
 
-										if err2 != nil {
-											log.Printf("Not able to connect to %v, error %v", standbyServer.ReplId, err2)
+										err = primaryConnection.Close()
+										if err != nil {
+											log.Printf("Error while closing primary connectionfor %v, error : %v", primaryKey, err)
 										} else {
-											secondaryConn := pb.NewReplClient(secondaryConnection)
-											_, err := secondaryConn.MakeSecondary(context.Background(), &pb.PortIntroInfo{ReplId:primaryKey})
-											if err != nil {
-												log.Printf("Error while making sencondary %v, error %v", standbyServer.ReplId, err)
+											log.Printf("Informing Secondary %v about it new primary %v", standbyServer.ReplId, primaryKey)
+											secondaryConnection, err2 := connect(standbyServer.ReplId)
+
+											if err2 != nil {
+												log.Printf("Not able to connect to %v, error %v", standbyServer.ReplId, err2)
 											} else {
-												standbyServers = standbyServers[1:]
-											}
-											err = secondaryConnection.Close()
-											if err != nil {
-												log.Printf("Error while closing secondary connection for %v, error : %v", standbyServer.ReplId, err)
-											}
+												secondaryConn := pb.NewReplClient(secondaryConnection)
+												_, err := secondaryConn.MakeSecondary(context.Background(), &pb.PortIntroInfo{ReplId:primaryKey})
+												if err != nil {
+													log.Printf("Error while making sencondary %v, error %v", standbyServer.ReplId, err)
+												} else {
+													standbyServers = standbyServers[1:]
+												}
+												err = secondaryConnection.Close()
+												if err != nil {
+													log.Printf("Error while closing secondary connection for %v, error : %v", standbyServer.ReplId, err)
+												}
 
+											}
 										}
-
 									}
 								}
 
@@ -227,6 +239,7 @@ func manage (manage *Manager) {
 					if err != nil {
 						log.Printf("Not able to send ack to %v, error : %v", portInfo.arg.ReplId, err)
 					}
+					conn = nil
 				}
 				err = connection.Close()
 				if err != nil {

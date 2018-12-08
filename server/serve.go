@@ -139,7 +139,7 @@ func connectToPeer(peer string) (*grpc.ClientConn, error) {
 }
 
 // The main service loop. All modifications to the Trie are run through here.
-func serve(s *TrieStore, r *rand.Rand, id string, replPort int, manager pb.ManagerClient) {
+func serve(s *TrieStore, r *rand.Rand, id string, replPort int, managerPortString string) {
 
 	repl := Repl{
 		RequestChan: make(chan RequestArgs),
@@ -192,12 +192,26 @@ func serve(s *TrieStore, r *rand.Rand, id string, replPort int, manager pb.Manag
 		select {
 			case prim := <- repl.MakePrimaryChan:
 				// When manager calls MakePrimary
-				secondaryGlobalStates = make(map[string] *SecondaryGlobalState)
-				//We update our connections to secondaries
-				for _, secondary := range prim.arg.Secondaries{
-					secondaryGlobalStates[secondary.ReplId] = &SecondaryGlobalState{make(map[int64]string)}
-					log.Printf("Added %v to Secondary map of primary %v", secondary.ReplId, id)
+				if role != Primary {
+					secondaryGlobalStates = make(map[string]*SecondaryGlobalState)
+					for _, secondary := range prim.arg.Secondaries{
+						secondaryGlobalStates[secondary.ReplId] = &SecondaryGlobalState{make(map[int64]string)}
+						log.Printf("Added %v to Secondary map of primary %v", secondary.ReplId, id)
+					}
+				} else {
+					for _, secondary := range prim.arg.Secondaries{
+						if _, ok := secondaryGlobalStates[secondary.ReplId]; ok {
+							//Already Exists
+						} else {
+							secondaryGlobalStates[secondary.ReplId] = &SecondaryGlobalState{make(map[int64]string)}
+						}
+						secondaryGlobalStates[secondary.ReplId] = &SecondaryGlobalState{make(map[int64]string)}
+						log.Printf("Added %v to Secondary map of primary %v", secondary.ReplId, id)
+					}
+					//Remoce Intersection
 				}
+				//We update our connections to secondaries
+
 				if prim.arg.RequestNumber < 0{
 					if role == Primary {
 						//Dont change Req Number
@@ -223,9 +237,21 @@ func serve(s *TrieStore, r *rand.Rand, id string, replPort int, manager pb.Manag
 				log.Printf("timer off")
 				if role == StandBy {
 					if !acknowledged {
-						_, err := manager.IntroduceSelf(context.Background(), &pb.PortIntroInfo{ReplId: "127.0.0.1:" + fmt.Sprintf("%v", replPort)})
+						conn, err := grpc.Dial(managerPortString, grpc.WithInsecure())
 						if err != nil {
-							log.Printf("Error while introducing self to Manager : %v", err)
+							log.Printf("Error while connecting to manager %v from %v error - %v", managerPortString, id, err)
+						} else {
+							manager := pb.NewManagerClient(conn)
+							_, err := manager.IntroduceSelf(context.Background(), &pb.PortIntroInfo{ReplId: "127.0.0.1:" + fmt.Sprintf("%v", replPort)})
+							if err != nil {
+								log.Printf("Error while introducing self to Manager : %v", err)
+							}
+							manager = nil
+						}
+
+						err = conn.Close()
+						if err != nil {
+							log.Printf("Error while closing connection to manager - %v", err)
 						}
 					}
 				}
@@ -286,11 +312,11 @@ func serve(s *TrieStore, r *rand.Rand, id string, replPort int, manager pb.Manag
 			case  <- repl.HeartbeatChan:
 				// when manager sends heartbeat to Primary
 				if role == Primary {
-					var k= pb.HeartbeatAckMessage{}
+					var k = pb.HeartbeatAckMessage{}
 
 					for secondaryId,secondaryGlobalState := range secondaryGlobalStates {
 
-						var t= &pb.HeartbeatAckArg{}
+						var t= pb.HeartbeatAckArg{}
 						var l = 0
 
 						if secondaryGlobalState.requests != nil {
@@ -299,13 +325,28 @@ func serve(s *TrieStore, r *rand.Rand, id string, replPort int, manager pb.Manag
 
 						t.Key = &pb.PortIntroInfo{ReplId: secondaryId}
 						t.Val = int64(l)
-						k.Table = append(k.Table, t)
+						k.Table = append(k.Table, &t)
 					}
+
 					k.Id = &pb.PortIntroInfo{ReplId: id}
-					_, err := manager.HeartbeatAck(context.Background(), &k)
+					conn, err := grpc.Dial(managerPortString, grpc.WithInsecure())
 					if err != nil {
-						log.Printf("Error while sending heartbeat ack to manager error : %v", err)
+						log.Printf("Error while connecting to manager %v from %v error - %v", managerPortString, id, err)
+					} else {
+						manager := pb.NewManagerClient(conn)
+						_, err := manager.HeartbeatAck(context.Background(), &k)
+						//_, err := manager.HeartbeatAck(context.Background(),&pb.HeartbeatAckMessage{})
+						if err != nil {
+							log.Printf("Error while sending heartbeat ack to manager error : %v", err)
+						}
+						manager = nil
 					}
+					err = conn.Close()
+					if err != nil {
+						log.Printf("Error while closing connection to manager - %v", err)
+					}
+				} else {
+					log.Printf("I am not primary, my status is %v, disregarding heartbeat", role)
 				}
 
 
@@ -339,7 +380,6 @@ func serve(s *TrieStore, r *rand.Rand, id string, replPort int, manager pb.Manag
 						}
 					}
 				}
-
 
 
 		}
