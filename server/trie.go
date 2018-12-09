@@ -252,8 +252,11 @@ type TrieStore struct {
 }
 
 func (s *TrieStore) CheckSplit(ctx context.Context, arg *pb.MaxTrieSize) (*pb.Empty, error) {
+	log.Printf("Checking if split required")
 	go func() {
+		log.Printf("Number of words = %v", s.root.totalWords)
 		if s.root.totalWords > arg.Length {
+			log.Printf("Yes Want to split")
 			conn, err := grpc.Dial(s.manager, grpc.WithInsecure())
 			if err != nil {
 				log.Printf("Error while connecting to manager %v from Trie error - %v", s.manager, err)
@@ -261,7 +264,9 @@ func (s *TrieStore) CheckSplit(ctx context.Context, arg *pb.MaxTrieSize) (*pb.Em
 				manager := pb.NewManagerClient(conn)
 				_, err := manager.SplitTrieRequest(context.Background(), &pb.PortInfo{ReplId: s.id})
 				if err != nil {
-					log.Printf("Error while sending Split Words list to manager : %v", err)
+					log.Printf("Error while sending split request to manager: %v", err)
+				} else {
+					log.Printf("Sent manager request to split")
 				}
 				err = conn.Close()
 				if err != nil {
@@ -276,7 +281,9 @@ func (s *TrieStore) CheckSplit(ctx context.Context, arg *pb.MaxTrieSize) (*pb.Em
 var results = make([] Result, 0)
 
 func (s *TrieStore) AckSplitTrieRequest(ctx context.Context, arg *pb.Empty) (*pb.Empty, error) {
+	log.Printf("Received ack from Manager to split trie, returning word list to manager")
 
+	log.Printf("Generating split words")
 	go func() {
 		results = autoComplete(s.root, "")
 		conn, err := grpc.Dial(s.manager, grpc.WithInsecure())
@@ -297,7 +304,9 @@ func (s *TrieStore) AckSplitTrieRequest(ctx context.Context, arg *pb.Empty) (*pb
 
 			_, err := manager.SplitTrieListRequest(context.Background(), &request)
 			if err != nil {
-				log.Printf("Error while sending Split Words list to manager : %v", err)
+				log.Printf("Error while sending Split Words list to manager form Old Trie : %v", err)
+			} else {
+				log.Printf("Sent manager Split words")
 			}
 			err = conn.Close()
 			if err != nil {
@@ -311,7 +320,7 @@ func (s *TrieStore) AckSplitTrieRequest(ctx context.Context, arg *pb.Empty) (*pb
 }
 
 func (s *TrieStore) Create(ctx context.Context, arg *pb.SplitWordRequest) (*pb.Empty, error) {
-
+	log.Printf("Received request from manager to create Trie")
 	go func() {
 		var result= make([] Result, 0)
 		for _, word := range arg.Words {
@@ -326,7 +335,9 @@ func (s *TrieStore) Create(ctx context.Context, arg *pb.SplitWordRequest) (*pb.E
 			manager := pb.NewManagerClient(conn)
 			_, err := manager.SplitTrieCreatedAck(context.Background(), &pb.PortInfo{ReplId: arg.Id})
 			if err != nil {
-				log.Printf("Error while sending Split Words list to manager : %v", err)
+				log.Printf("Error while sending Ack to manager for Trie Created Successfully in NEw Trie : %v", err)
+			} else {
+				log.Printf("Sent manager Trie Created Successfully")
 			}
 			err = conn.Close()
 			if err != nil {
@@ -340,6 +351,7 @@ func (s *TrieStore) Create(ctx context.Context, arg *pb.SplitWordRequest) (*pb.E
 }
 
 func (s *TrieStore) SplitTrieCreatedAck(ctx context.Context, arg *pb.Empty) (*pb.Empty, error) {
+	log.Printf("Received ack for splitting self trie")
 	go func() {
 		s.root = createTrie(results)
 		results = make([] Result, 0)

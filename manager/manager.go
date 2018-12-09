@@ -42,7 +42,6 @@ type Manager struct {
 	SplitTrieRequestChan chan SplitTrieRequestArgs
 	SplitWordsChan chan SplitWordRequestArgs
 	SplitTrieRequestAckChan chan SplitTrieRequestAckArgs
-	DoneSplitAckChan chan string
 }
 
 
@@ -135,6 +134,9 @@ func manage (manage *Manager) {
 	//In Progress Splitting
 	inProgressSplitting := make(map[string] string)
 
+	//trie id --> split_word
+	trieIdtoWordMapping := make(map[string] string)
+
 
 
 	heartBeatTimer := time.NewTimer(time.Duration(1000) * time.Millisecond)
@@ -160,6 +162,12 @@ func manage (manage *Manager) {
 
 				// Send heartbeat to primaries
 				for primary := range primaryHB{
+
+					log.Printf("For primary %v Number of secondries = %v", primary, len(table[primary]))
+					log.Printf("Lag counts for each Secondary are : ")
+					for key, val := range(table[primary]){
+						log.Printf("Secondary %v, Lag OCunt %v", key, val)
+					}
 
 					log.Printf("Sending HeartBeat to %v", primary)
 					connection, err := connect(primary)
@@ -292,7 +300,7 @@ func manage (manage *Manager) {
 							log.Printf("Error while connecting to Trie %v from Manager error - %v", trieId, err)
 						} else {
 							trie := pb.NewTrieStoreClient(conn)
-							_, err := trie.CheckSplit(context.Background(), &pb.MaxTrieSize{Length: 500})
+							_, err := trie.CheckSplit(context.Background(), &pb.MaxTrieSize{Length: 10})
 							if err != nil {
 								log.Printf("Error while sending check sploit request to Trie %v : %v", trieId, err)
 							}
@@ -304,7 +312,7 @@ func manage (manage *Manager) {
 					}
 				}
 
-				restartTimer(allocationTimer, 20000)
+				restartTimer(splitTimer, 20000)
 
 
 
@@ -354,6 +362,7 @@ func manage (manage *Manager) {
 				table[rep.arg.Id.ReplId] = t
 
 			case arg :=<- manage.SplitTrieRequestChan:
+				log.Printf("Trie %v asking to split", arg.arg.ReplId)
 				_, ok := inProgressSplitting[arg.arg.ReplId]
 				if !ok {
 
@@ -362,7 +371,7 @@ func manage (manage *Manager) {
 						reservedServers = append(reservedServers, standByServer)
 						standbyServers = standbyServers[1:]
 
-						inProgressSplitting[arg.arg.ReplId] = standByServer.ReplId
+						inProgressSplitting[arg.arg.ReplId] = replToTrieMapping[standByServer.ReplId]
 
 						conn, err := grpc.Dial(arg.arg.ReplId, grpc.WithInsecure())
 						var releaseResources = false
@@ -373,7 +382,7 @@ func manage (manage *Manager) {
 							trie := pb.NewTrieStoreClient(conn)
 							_, err = trie.AckSplitTrieRequest(context.Background(), &pb.Empty{})
 							if err != nil {
-								log.Printf("Error while sending Split Words list to manager : %v", err)
+								log.Printf("Error while sending Split Words list to manager from old trie : %v", err)
 								releaseResources = true
 							}
 							err = conn.Close()
@@ -392,18 +401,21 @@ func manage (manage *Manager) {
 				}
 
 			case arg := <- manage.SplitWordsChan:
-				if reseervedId, ok := inProgressSplitting[arg.arg.Id]; ok{
+				log.Printf("Trie %v sent list of words to split", arg.arg.Id)
+				trieIdtoWordMapping[arg.arg.Id] = arg.arg.Words[0].Word // Old Trie Id
+				if reservedId, ok := inProgressSplitting[arg.arg.Id]; ok{
 					var release = false
-					conn, err := grpc.Dial(reseervedId, grpc.WithInsecure())
+					log.Printf("Connectin to new Trie Id %v", reservedId)
+					conn, err := grpc.Dial(reservedId, grpc.WithInsecure())
 					if err != nil {
-						log.Printf("Error while connecting to reserved trie %v from manager error - %v", reseervedId, err)
+						log.Printf("Error while connecting to reserved trie %v from manager error - %v", reservedId, err)
 						release = true
 					} else {
 						trie := pb.NewTrieStoreClient(conn)
 						_, err := trie.Create(context.Background(), &pb.SplitWordRequest{Words:arg.arg.Words, Id:arg.arg.Id})
 						if err != nil {
 							release = true
-							log.Printf("Error while sending Split Words list to manager : %v", err)
+							log.Printf("Error while sending Split Words list to new trie from Manager: %v", err)
 						}
 						err = conn.Close()
 						if err != nil {
@@ -425,8 +437,12 @@ func manage (manage *Manager) {
 				}
 
 			case arg := <- manage.SplitTrieRequestAckChan:
+
 				var oldTrieId = arg.arg.ReplId
 				var newTrieId, ok = inProgressSplitting[oldTrieId]
+
+				log.Printf("Trie %v Has created new trie", newTrieId)
+
 				if !ok{
 					log.Printf("Can't find in progress. Something is wrong")
 					//Maybe Handle Release ?
@@ -441,6 +457,7 @@ func manage (manage *Manager) {
 							log.Printf("Error while connecting to reserved repl %v from manager error - %v", key, err)
 						} else {
 							repl := pb.NewReplClient(conn)
+							log.Printf("Trying to make Repl %v as Primary for trie %v", key, val)
 							_, err := repl.MakePrimary(context.Background(), &pb.PrimaryInitMessage{RequestNumber:0})
 							if err != nil {
 								release = true
@@ -453,9 +470,13 @@ func manage (manage *Manager) {
 							//Check here if key is never found --> Some error state ?
 						}
 						//make change in inProgressSplitting
+						log.Printf("Deleting from in Progress")
 						delete(inProgressSplitting, oldTrieId)
 
-						for idx, reservedServer := range reservedServers {
+						var idx = 0
+						var reservedServer = &pb.PortInfo{}
+
+						for idx, reservedServer = range reservedServers {
 							if reservedServer.ReplId == newTrieId{
 								reservedServers = append(reservedServers[0:idx], reservedServers[idx+1 : ]...)
 								if release {
@@ -464,44 +485,48 @@ func manage (manage *Manager) {
 								break
 							}
 						}
+
+						log.Printf("Deleted from In progress")
+
 						if !release {
-							manage.DoneSplitAckChan <- oldTrieId
+							log.Printf("Sending old trie %v final ack to split", oldTrieId)
+							var release = false
+							conn, err := grpc.Dial(oldTrieId, grpc.WithInsecure())
+							if err != nil {
+								log.Printf("Error while connecting to oldtrie %v from manager error - %v", oldTrieId, err)
+								release = true
+							} else {
+								trie := pb.NewTrieStoreClient(conn)
+								_, err := trie.SplitTrieCreatedAck(context.Background(),&pb.Empty{})
+								if err != nil {
+									release = true
+									log.Printf("Error while sending Ack to oldtrieid : %v", err)
+								}
+								err = conn.Close()
+								if err != nil {
+									log.Printf("Error while closing connection to manager - %v", err)
+								}
+							}
+							if release {
+								standbyServers = append(standbyServers, reservedServer)
+							} else {
+								primaryHB[reservedServer.ReplId] = 0 //Updating HeartBeat Mapping
+
+								for prefix, id := range primaryMapping{
+									var trieId = replToTrieMapping[id]
+									if val, ok = trieIdtoWordMapping[trieId]; ok {
+										primaryMapping[strings.Split(prefix, ":")[0] +":" +val] = id
+										primaryMapping[val +":" + strings.Split(prefix, ":")[1]] = reservedServer.ReplId //Updating Prefix Mapping
+										break
+									}
+								}
+								table[reservedServer.ReplId] = make(map[string] int64)
+							}
 						}
 
+						break
 					}
 				}
-			case oldTrieId := <- manage.DoneSplitAckChan:
-				var release = false
-				conn, err := grpc.Dial(oldTrieId, grpc.WithInsecure())
-				if err != nil {
-					log.Printf("Error while connecting to oldtrie %v from manager error - %v", oldTrieId, err)
-					release = true
-				} else {
-					trie := pb.NewTrieStoreClient(conn)
-					_, err := trie.SplitTrieCreatedAck(context.Background(),&pb.Empty{})
-					if err != nil {
-						release = true
-						log.Printf("Error while sending Ack to oldtrieid : %v", err)
-					}
-					err = conn.Close()
-					if err != nil {
-						log.Printf("Error while closing connection to manager - %v", err)
-					}
-				}
-				if release {
-					manage.DoneSplitAckChan <- oldTrieId
-				}
-
-
-
-
-
-
-
-
-
-
-
 		}
 	}
 }

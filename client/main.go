@@ -147,9 +147,6 @@ func main() {
 	add("hip", manager)
 
 
-
-
-
 	get("he", manager)
 	get("hi", manager)
 	get("h", manager)
