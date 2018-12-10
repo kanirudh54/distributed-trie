@@ -19,6 +19,8 @@ func add(word string, manager pb.ManagerClient) {
 
 	triePort, err := manager.GetTriePortInfo(context.Background(), &pb.Key{Key: word})
 
+	log.Printf("Got trie port %v from set", triePort)
+
 	if err != nil {
 		log.Printf("Error while adding : %v", err)
 	} else {
@@ -35,10 +37,10 @@ func add(word string, manager pb.ManagerClient) {
 		putReq := &pb.Key{Key: word}
 		res, err := kvc.Set(context.Background(), putReq)
 		if err != nil {
-			log.Fatalf("Put error")
+			log.Fatalf("Put error : %v", err)
 		}
 		//log.Printf("Got response key: \"%v\" value:\"%v\"", res.GetKv().Key, res.GetKv().Value)
-		log.Printf("Got response for set : \"%v\" value:\"%v\"", res.GetSuggestions(), res.GetS())
+		log.Printf("Got response for set '%v' : \"%v\" value:\"%v\"", word, res.GetSuggestions(), res.GetS())
 
 	}
 }
@@ -46,6 +48,7 @@ func add(word string, manager pb.ManagerClient) {
 func get(word string, manager pb.ManagerClient) {
 
 	triePort, err := manager.GetTriePortInfo(context.Background(), &pb.Key{Key: word})
+	log.Printf("Got trie port %v from get", triePort)
 
 	if err != nil {
 		log.Printf("Error while adding : %v", err)
@@ -65,7 +68,7 @@ func get(word string, manager pb.ManagerClient) {
 		if err != nil {
 			log.Fatalf("Request error %v", err)
 		}
-		log.Printf("Got response for get %v : \"%v\" value:\"%v\"", word, res.GetSuggestions(), res.GetS())
+		log.Printf("Got response for get '%v' : \"%v\" value:\"%v\"", word, res.GetSuggestions(), res.GetS())
 
 	}
 
@@ -146,11 +149,21 @@ func main() {
 	add("hip", manager)
 	add("hip", manager)
 
+	add("__main__", manager)
+	add(".škoda", manager)
+	add(".skoda", manager)
+
 
 	get("he", manager)
 	get("hi", manager)
 	get("h", manager)
 
+	get("hil", manager)
+	get("hip", manager)
+	get("was", manager)
+
+	get("_", manager)
+	get(".", manager)
 
 
 }

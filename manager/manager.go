@@ -138,11 +138,14 @@ func manage (manage *Manager) {
 	trieIdtoWordMapping := make(map[string] string)
 
 
+	heartBeatTimerDuration := 1000
+	allocationTimerDuration := 10000
+	splitTimerDuration := 20000
 
-	heartBeatTimer := time.NewTimer(time.Duration(1000) * time.Millisecond)
-	allocationTimer := time.NewTimer(time.Duration(10000) * time.Millisecond)
 
-	splitTimer := time.NewTimer(time.Duration(20000) * time.Millisecond)
+	heartBeatTimer := time.NewTimer(time.Duration(heartBeatTimerDuration) * time.Millisecond)
+	allocationTimer := time.NewTimer(time.Duration(allocationTimerDuration) * time.Millisecond)
+	splitTimer := time.NewTimer(time.Duration(splitTimerDuration) * time.Millisecond)
 
 
 
@@ -163,10 +166,16 @@ func manage (manage *Manager) {
 				// Send heartbeat to primaries
 				for primary := range primaryHB{
 
-					log.Printf("For primary %v Number of secondries = %v", primary, len(table[primary]))
-					log.Printf("Lag counts for each Secondary are : ")
+					prefix := ""
+					for key, val := range primaryMapping {
+						if val == primary{
+							prefix = key
+							break
+						}
+					}
+					log.Printf("For primary %v Number of secondries = %v Prefix Range = %v", primary, len(table[primary]), prefix)
 					for key, val := range(table[primary]){
-						log.Printf("Secondary %v, Lag OCunt %v", key, val)
+						log.Printf("Primary %v Secondary %v, Lag Count %v", primary, key, val)
 					}
 
 					log.Printf("Sending HeartBeat to %v", primary)
@@ -187,7 +196,7 @@ func manage (manage *Manager) {
 						}
 					}
 				}
-				restartTimer(heartBeatTimer, 1000)
+				restartTimer(heartBeatTimer, time.Duration(heartBeatTimerDuration))
 
 
 			case <- allocationTimer.C:
@@ -286,7 +295,7 @@ func manage (manage *Manager) {
 					}
 				}
 
-				restartTimer(allocationTimer, 10000)
+				restartTimer(allocationTimer, time.Duration(allocationTimerDuration))
 
 
 			case <- splitTimer.C:
@@ -312,7 +321,7 @@ func manage (manage *Manager) {
 					}
 				}
 
-				restartTimer(splitTimer, 20000)
+				restartTimer(splitTimer, time.Duration(splitTimerDuration))
 
 
 
@@ -403,6 +412,7 @@ func manage (manage *Manager) {
 			case arg := <- manage.SplitWordsChan:
 				log.Printf("Trie %v sent list of words to split", arg.arg.Id)
 				trieIdtoWordMapping[arg.arg.Id] = arg.arg.Words[0].Word // Old Trie Id
+				log.Printf("Splitting %v at word %v", arg.arg.Id, arg.arg.Words[0].Word)
 				if reservedId, ok := inProgressSplitting[arg.arg.Id]; ok{
 					var release = false
 					log.Printf("Connectin to new Trie Id %v", reservedId)
@@ -515,8 +525,9 @@ func manage (manage *Manager) {
 								for prefix, id := range primaryMapping{
 									var trieId = replToTrieMapping[id]
 									if val, ok = trieIdtoWordMapping[trieId]; ok {
-										primaryMapping[strings.Split(prefix, ":")[0] +":" +val] = id
-										primaryMapping[val +":" + strings.Split(prefix, ":")[1]] = reservedServer.ReplId //Updating Prefix Mapping
+										delete(primaryMapping, prefix) // Delete old mapping
+										primaryMapping[strings.Split(prefix, ":")[0] +":" +val] = id // old trie new Mapping
+										primaryMapping[val +":" + strings.Split(prefix, ":")[1]] = reservedServer.ReplId //new trie new mapping
 										break
 									}
 								}

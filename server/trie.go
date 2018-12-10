@@ -91,6 +91,10 @@ func updateTrie(t * Trie, word string, count int64){
 
 	for _,char := range word {
 		var index = int(char)
+		if index < 0 || index > len(current.children){
+			log.Printf("Character %v at index %v for word %v is out of range. Not updating !", index, char, word)
+			return
+		}
 		if current.children[index] == nil {
 			current.children[index] = createTrieNode()
 		}
@@ -116,6 +120,11 @@ func autoComplete(t * Trie, prefix string) [] Result {
 		return [] Result{{word:"", count: 0}}
 	}
 	for _,c := range prefix {
+
+		if int(c) < 0 || int(c) > len(temp.children){
+			log.Printf("Character %v at index %v for prefix %v is out of range. Returning empty list!", int(c), c, prefix)
+			return [] Result{{word:"", count: 0}}
+		}
 
 		if temp.children[int(c)] != nil {
 			temp = temp.children[int(c)]
