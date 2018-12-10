@@ -7,7 +7,9 @@ import (
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"log"
+	"net/http"
 	"os"
+	"encoding/json"
 )
 
 func usage() {
@@ -45,7 +47,7 @@ func add(word string, manager pb.ManagerClient) {
 	}
 }
 
-func get(word string, manager pb.ManagerClient) {
+func get(word string, manager pb.ManagerClient) [] string{
 
 	triePort, err := manager.GetTriePortInfo(context.Background(), &pb.Key{Key: word})
 	log.Printf("Got trie port %v from get", triePort)
@@ -69,14 +71,10 @@ func get(word string, manager pb.ManagerClient) {
 			log.Fatalf("Request error %v", err)
 		}
 		log.Printf("Got response for get '%v' : \"%v\" ", word, res.GetSuggestions())
+		return res.GetSuggestions()
 
 	}
-
-
-
-
-
-
+	return make([] string, 0)
 }
 
 
@@ -103,7 +101,37 @@ func main() {
 
 
 
-	add("hello", manager)
+	http.HandleFunc("/add", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		var word = r.URL.Query().Get("searchitem")
+		log.Printf("Word = %v", word)
+		if word != "" {
+			add(word, manager)
+			log.Printf("Added successfully")
+		}
+	})
+
+	http.HandleFunc("/get", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		var prefix = r.URL.Query().Get("prefix")
+		if prefix != "" {
+			var suggestions = get(prefix, manager)
+			js, err := json.Marshal(suggestions)
+			if err!=nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			} else {
+				w.Header().Set("Content-Type", "application/json")
+				w.Write(js)
+			}
+		}
+
+	})
+
+	log.Fatal(http.ListenAndServe(":9000", nil))
+
+
+	/*add("hello", manager)
 	add("hello", manager)
 	add("hello", manager)
 	add("hello", manager)
@@ -144,6 +172,21 @@ func main() {
 	add(".skoda", manager)
 
 
+	add("where is google headquarters located ?", manager)
+	add("where is google NYC office located ?", manager)
+	add("where is google headquarters located ?", manager)
+	add("where is facebook headquarters located ?", manager)
+	add("where is google headquarters located ?", manager)
+	add("where is amazon located ?", manager)
+	add("who is founder of microsoft ?", manager)
+	add("who is founder of google ?", manager)
+	add("who is founder of google ?", manager)
+	add("who is founder of google ?", manager)
+	add("who is founder of facebook ?", manager)
+	add("who is Bill Gates ?", manager)
+	add("who is founder of microsoft ?", manager)
+
+
 	get("he", manager)
 	get("hi", manager)
 	get("h", manager)
@@ -154,6 +197,11 @@ func main() {
 
 	get("_", manager)
 	get(".", manager)
+
+	get("who is", manager)
+	*/
+
+
 
 
 }

@@ -440,7 +440,7 @@ func serve(s *TrieStore, replPort int, triePort int, serviceIP string, managerPo
 					}
 
 					k.Id = &pb.PortInfo{ReplId: replId}
-					conn, err := grpc.Dial(managerPortString, grpc.WithInsecure(), grpc.WithBlock(), grpc.WithTimeout(time.Duration(1000)*time.Millisecond))
+					conn, err := grpc.Dial(managerPortString, grpc.WithInsecure())
 					if err != nil {
 						log.Printf("Error while connecting to manager %v from %v error - %v", managerPortString, replId, err)
 					} else {
@@ -467,31 +467,36 @@ func serve(s *TrieStore, replPort int, triePort int, serviceIP string, managerPo
 				//TODO : Update secondary only if request from registered primary. There may be 2 primaries, 1 old and 1 new
 				if role == Secondary {
 					// replicate and update selfstate
-					if _, ok := secondaryLocalState.completed[req.arg.GetRequestNumber()]; role == Secondary && !ok { //TODO: deal with concurrent Trie requests
-						secondaryLocalState.completed[req.arg.GetRequestNumber()] = true
-						go s.HandleCommandSecondary(pb.Command{Operation: pb.Op_SET, Arg: &pb.Command_Set{Set: &pb.Key{Key: req.arg.GetWord()}}})
-						log.Printf("priaryId: %v", primaryId)
+					if req.arg.PrimaryId != primaryId {
+						log.Printf("Primary %v sent me update request, have %v as registered primary. Not updating.", req.arg.PrimaryId, primaryId)
+					} else {
+						if _, ok := secondaryLocalState.completed[req.arg.GetRequestNumber()]; role == Secondary && !ok { //TODO: deal with concurrent Trie requests
+							secondaryLocalState.completed[req.arg.GetRequestNumber()] = true
+							go s.HandleCommandSecondary(pb.Command{Operation: pb.Op_SET, Arg: &pb.Command_Set{Set: &pb.Key{Key: req.arg.GetWord()}}})
+							log.Printf("primaryId: %v", primaryId)
 
-						conn, err := connectToPeer(primaryId)
-						if err != nil {
-							log.Printf("Cannot connect to primary %v from %v with error %v", primaryId, replId, err)
-						} else {
-							primaryConnection := pb.NewReplClient(conn)
-							_, err := primaryConnection.AckPrimary(context.Background(),
-								&pb.UpdateSecondaryTrieReply{RequestNumber: req.arg.GetRequestNumber(), Success: true, Peer: replId})
+							conn, err := connectToPeer(primaryId)
 							if err != nil {
-								repl.RequestChan <- req
-								log.Printf("Error while sending Ack from %v to %v : %v ", replId, primaryId, err)
-								log.Printf("Placing the request back onto own channel")
+								log.Printf("Cannot connect to primary %v from %v with error %v", primaryId, replId, err)
 							} else {
-								log.Printf("Sent Ack to primary %v from %v", primaryId, replId)
-							}
-							err = conn.Close()
-							if err != nil {
-								log.Printf("Error while closing connection between %v and %v : %v", replId, primaryId, err)
+								primaryConnection := pb.NewReplClient(conn)
+								_, err := primaryConnection.AckPrimary(context.Background(),
+									&pb.UpdateSecondaryTrieReply{RequestNumber: req.arg.GetRequestNumber(), Success: true, Peer: replId})
+								if err != nil {
+									repl.RequestChan <- req
+									log.Printf("Error while sending Ack from %v to %v : %v ", replId, primaryId, err)
+									log.Printf("Placing the request back onto own channel")
+								} else {
+									log.Printf("Sent Ack to primary %v from %v", primaryId, replId)
+								}
+								err = conn.Close()
+								if err != nil {
+									log.Printf("Error while closing connection between %v and %v : %v", replId, primaryId, err)
+								}
 							}
 						}
 					}
+
 				}
 
 			case addSec := <- repl.AddSecondaryChan:
