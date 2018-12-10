@@ -114,6 +114,7 @@ message heartbeatAckMessage{
 
 message primaryInitMessage{
     int64 requestNumber = 1;
+    repeated portInfo secondaries = 2;
 }
 
 message addSecondaryMessage{
@@ -157,6 +158,7 @@ service Repl {
 
     rpc MakePrimary(primaryInitMessage) returns (Empty) {}
     rpc MakeSecondary(portInfo) returns (Empty) {}
+    rpc MakeStandBy(Empty) returns (Empty) {}
 
 
     rpc DeleteSecondaryFromPrimaryList(deleteSecondaryMessage) returns (Empty) {}

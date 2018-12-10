@@ -43,6 +43,10 @@ type MakeSecondaryArgs struct {
 	arg *pb.PortInfo
 }
 
+type MakeStandByArgs struct {
+	arg * pb.Empty
+}
+
 type AddSecondaryArgs struct {
 	arg *pb.AddSecondaryMessage
 }
@@ -58,6 +62,7 @@ type Repl struct {
 
 	MakePrimaryChan chan MakePrimaryArgs
 	MakeSecondaryChan chan MakeSecondaryArgs
+	MakeStandByChan chan MakeStandByArgs
 	InitChan chan AckIntroArgs
 	RequestChan chan RequestArgs
 	ReplyChan   chan ReplyArgs
@@ -84,6 +89,11 @@ func (r *Repl) MakePrimary(ctx context.Context, arg *pb.PrimaryInitMessage) (*pb
 
 func (r *Repl) MakeSecondary(ctx context.Context, arg *pb.PortInfo) (*pb.Empty, error) {
 	r.MakeSecondaryChan <- MakeSecondaryArgs{arg:arg}
+	return &pb.Empty{}, nil
+}
+
+func (r *Repl) MakeStandBy(ctx context.Context, arg *pb.Empty) (*pb.Empty, error) {
+	r.MakeStandByChan <- MakeStandByArgs{arg:arg}
 	return &pb.Empty{}, nil
 }
 
@@ -166,6 +176,7 @@ func serve(s *TrieStore, replPort int, triePort int, serviceIP string, managerPo
 		HeartbeatChan : make(chan HeartbeatArgs),
 		MakePrimaryChan : make(chan MakePrimaryArgs),
 		MakeSecondaryChan : make(chan MakeSecondaryArgs),
+		MakeStandByChan: make(chan MakeStandByArgs),
 		AddSecondaryChan: make(chan AddSecondaryArgs),
 		DeleteSecondaryChan: make(chan DeleteSecondaryArgs),
 	}
@@ -257,6 +268,16 @@ func serve(s *TrieStore, replPort int, triePort int, serviceIP string, managerPo
 				secondaryLocalState = SecondaryLocalState{make(map[int64]bool)}
 				primaryId = sec.arg.ReplId
 				log.Printf("Became secondary to primary %v", primaryId)
+
+			case <- repl.MakeStandByChan:
+				log.Printf("Changing state from %v to standby", role)
+				role = StandBy
+				secondaryGlobalStates = make(map[string] *SecondaryGlobalState)
+				secondaryLocalState = SecondaryLocalState{make(map[int64]bool)}
+				requestNumber = 0
+				primaryId = ""
+				acknowledged = false
+
 
 			case <-timer.C:
 				log.Printf("timer off")

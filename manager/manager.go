@@ -121,6 +121,7 @@ func manage (manage *Manager) {
 	//Parameters
 	var maxSecondaries = 1 //Max Secondary for each primary
 	var maxLagCount = 50
+	var maxPrimaryHeartBeatMiss = 10
 
 
 
@@ -129,7 +130,7 @@ func manage (manage *Manager) {
 	var primaryHB = make(map[string] int) //Primary -> HeartBeat count table
 	var standbyServers = make([] *pb.PortInfo, 0) //StandBy Table
 	var reservedServers = make([] *pb.PortInfo, 0) //Reserved Servers
-	var failedServers = make([] string, 0) // List of servers which have failed
+	var failedServers = make(map[string] bool) // List of servers which have failed
 	var inProgressSplitting = make(map[string] string) //In Progress Splitting
 	var trieIdtoWordMapping = make(map[string] string) //trie id --> split_word
 
@@ -174,8 +175,8 @@ func manage (manage *Manager) {
 							break
 						}
 					}
-					log.Printf("For primary %v Number of secondries = %v Prefix Range = %v", primary, len(table[primary]), prefix)
-					for key, val := range(table[primary]){
+					log.Printf("For primary %v Number of secondries = %v Prefix Range = %v Miss HeartBeat count = %v", primary, len(table[primary]), prefix, primaryHB[primary])
+					for key, val := range table[primary] {
 						log.Printf("Primary %v Secondary %v, Lag Count %v", primary, key, val)
 					}
 
@@ -190,7 +191,88 @@ func manage (manage *Manager) {
 						if err != nil {
 							log.Printf("Error while establishing heartbeat connection %v", err)
 						}
-						//TODO Handle primary failure if count > 3
+						// Handling Primary Failure
+						if primaryHB[primary] > maxPrimaryHeartBeatMiss {
+
+							log.Printf("Primary Hasn't responded for %v heartbeats, max is %v. Replacing this.", primary, maxPrimaryHeartBeatMiss)
+
+							minLagCount , minLagSecondaryId:= -1, ""
+							for secondaryId, lagCount := range table[primary] {
+								if lagCount == 0 {
+									minLagSecondaryId = secondaryId
+									break
+								} else if minLagCount == -1 {
+									minLagCount = int(lagCount)
+									minLagSecondaryId = secondaryId
+								} else if minLagCount > int(lagCount){
+									minLagCount = int(lagCount)
+									minLagSecondaryId = secondaryId
+								}
+							}
+
+							var fromStandBy = false
+							if minLagSecondaryId == "" {
+								log.Printf("Can't find a Secondary to replace failed primary. Creating new Primary")
+								// logic to create new primary from standby servers if no secondary is available
+								if len(standbyServers) > 0 {
+									minLagSecondaryId = standbyServers[0].ReplId
+									fromStandBy = true
+								}
+
+							}
+
+							if minLagSecondaryId == "" {
+								log.Printf("No Secondaries/Stand By servers availabe to replace primary %v, will try next time", primary)
+							} else {
+
+								connection, err := connect(minLagSecondaryId)
+								if err != nil {
+									log.Printf("Not able to connect to %v to make it primary error - %v", minLagSecondaryId, err)
+								} else {
+									conn := pb.NewReplClient(connection)
+									var secondaries = make([] *pb.PortInfo, 0)
+
+
+									for secondary := range table[primary] {
+										if secondary != minLagSecondaryId {
+											secondaries = append(secondaries, &pb.PortInfo{ReplId: secondary})
+										}
+									}
+
+									_, err := conn.MakePrimary(context.Background(), &pb.PrimaryInitMessage{RequestNumber:-1, Secondaries:secondaries})
+									if err != nil {
+										log.Printf("Error while calling Make Primary RPC for %v, error - %v", minLagSecondaryId, err)
+									} else {
+										failedServers[primary] = true
+
+										delete(primaryHB, primary)
+										primaryHB[minLagSecondaryId] = 0
+
+										table[minLagSecondaryId] = make(map[string] int64) // The table will be updated in next heartbeat ack
+										delete(table, primary)
+
+										for prefix, primaryId := range primaryMapping {
+											if primaryId == primary {
+												primaryMapping[prefix] = minLagSecondaryId
+												break
+											}
+										}
+
+										if fromStandBy {
+											standbyServers = standbyServers[1:]
+										}
+
+									}
+									err = connection.Close()
+									if err!=nil {
+										log.Printf("Error while closing Connection in Creating Primary %v - %v", minLagSecondaryId, err)
+									}
+
+								}
+
+							}
+
+						}
 						err = connection.Close()
 						if err != nil {
 							log.Printf("Error while closing primary connection %v, error : %v", primary, err)
@@ -342,7 +424,7 @@ func manage (manage *Manager) {
 								if err != nil {
 									log.Printf("Deleting secondary %v from primary %v : %v", secondaryId, primaryId, err)
 								} else {
-									failedServers = append(failedServers, secondaryId)
+									failedServers[secondaryId] = true
 									delete(table[primaryId], secondaryId)
 								}
 								err = conn.Close()
@@ -360,11 +442,66 @@ func manage (manage *Manager) {
 
 			case <- recoverFailedServerTimer.C:
 				//Try to recover failed servers
-				log.Printf("Trying to recover failed server and put them in standby mode")
-				for _, failedServerId := range failedServers{
+
+				log.Printf("Trying to recover %v failed server and put them in standby mode", len(failedServers))
+
+				for failedServerId := range failedServers{
 					log.Printf("Server %v is failed. Trying to Recover it", failedServerId)
 					//TODO : Check if failed server in standby/primary or secondary list - If yes then remove from failed list, else connect and try to change it to standby
+					//Check in StandBy
+					var found = false
+					for _, standbyServer := range standbyServers {
+						if failedServerId == standbyServer.ReplId {
+							log.Printf("Found failed server %v in standBy server list. Removing failed server from list.", failedServerId)
+							delete(failedServers, failedServerId)
+							found = true
+							break
+						}
+					}
+
+					//Check in Primary and Secondary
+					for primary, secondaryMapping := range table {
+						if primary == failedServerId {
+							log.Printf("Found failed server %v in Primary Server list. Removing failed server from list.", failedServerId)
+							delete(failedServers, failedServerId)
+							found = true
+							break
+						}
+
+						for secondary, _ := range secondaryMapping {
+							if secondary == failedServerId {
+								log.Printf("Found failed server %v in Secondary Server list. Removing failed server from list.", failedServerId)
+								delete(failedServers, failedServerId)
+								found = true
+								break
+							}
+						}
+					}
+
+					if ! found{
+						//Failed server not found in list of primaries/secondaries/standBy
+						//Trie to connect to it and make it stand by server
+
+						conn, err := grpc.Dial(failedServerId, grpc.WithInsecure())
+						if err != nil {
+							log.Printf("Error while connecting to Failed Server %v from Manager error - %v", failedServerId, err)
+						} else {
+							repl := pb.NewReplClient(conn)
+							_, err := repl.MakeStandBy(context.Background(), &pb.Empty{})
+							if err != nil {
+								log.Printf("Error while calling make standby on failed server %v : %v", failedServerId, err)
+							} else {
+								log.Printf("successfully converted failed server %v to standby state", failedServerId)
+							}
+							err = conn.Close()
+							if err != nil {
+								log.Printf("Error while closing connection to failed server %v from manager - %v", failedServerId, err)
+							}
+						}
+					}
 				}
+
+				restartTimer(recoverFailedServerTimer, time.Duration(recoverFailedServerTimerDuration))
 
 
 
@@ -510,7 +647,8 @@ func manage (manage *Manager) {
 						} else {
 							repl := pb.NewReplClient(conn)
 							log.Printf("Trying to make Repl %v as Primary for trie %v", key, val)
-							_, err := repl.MakePrimary(context.Background(), &pb.PrimaryInitMessage{RequestNumber:0})
+							var secondaries = make([] *pb.PortInfo, 0)
+							_, err := repl.MakePrimary(context.Background(), &pb.PrimaryInitMessage{RequestNumber:0, Secondaries:secondaries})
 							if err != nil {
 								release = true
 								log.Printf("Error while sending Split Words list to manager : %v", err)
