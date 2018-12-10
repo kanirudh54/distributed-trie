@@ -198,5 +198,6 @@ service TrieStore {
     rpc updateNewSecondary(portInfo) returns (Empty) {} // Update New Secondary to self
     rpc ReplicateTrie(ReplicateTrieRequest) returns (Empty) {} //Message 4
 
+    rpc reset(Empty) returns (Empty) {}
 
 }

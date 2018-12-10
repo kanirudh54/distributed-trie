@@ -157,7 +157,7 @@ func connectToPeer(peer string) (*grpc.ClientConn, error) {
 }
 
 // The main service loop. All modifications to the Trie are run through here.
-func serve(s *TrieStore, id string, replPort int, triePort int, managerPortString string) {
+func serve(s *TrieStore, replPort int, triePort int, serviceIP string, managerPortString string) {
 
 	repl := Repl{
 		RequestChan: make(chan RequestArgs),
@@ -169,6 +169,9 @@ func serve(s *TrieStore, id string, replPort int, triePort int, managerPortStrin
 		AddSecondaryChan: make(chan AddSecondaryArgs),
 		DeleteSecondaryChan: make(chan DeleteSecondaryArgs),
 	}
+
+	var replId = serviceIP + fmt.Sprintf(":%v", replPort)
+	var trieId = serviceIP + fmt.Sprintf(":%v", triePort)
 
 
 	// Start in a Go routine so it doesn't affect us.
@@ -189,7 +192,7 @@ func serve(s *TrieStore, id string, replPort int, triePort int, managerPortStrin
 
 	var role = StandBy
 	var requestNumber int64 = 0
-	var primaryId = ""//"127.0.0.1:3003"
+	var primaryId = ""
 	// Create a timer and start running it
 	timer := time.NewTimer(randomDuration())
 
@@ -198,7 +201,7 @@ func serve(s *TrieStore, id string, replPort int, triePort int, managerPortStrin
 
 	for {
 
-		log.Printf("Role: %v, RequestNum: %v, PrimaryId: %v, myId: %v", role, requestNumber, primaryId, id)
+		log.Printf("Role: %v, RequestNum: %v, PrimaryId: %v, myId: %v", role, requestNumber, primaryId, replId)
 		for k, v := range secondaryGlobalStates {
 			log.Printf("Peer: %v", k)
 			for r,w := range v.requests{
@@ -219,6 +222,25 @@ func serve(s *TrieStore, id string, replPort int, triePort int, managerPortStrin
 						requestNumber = int64(len(secondaryLocalState.completed))
 					} else if role == StandBy {
 						requestNumber = prim.arg.RequestNumber
+						//Reset State
+						secondaryGlobalStates = make(map[string] *SecondaryGlobalState)
+						secondaryLocalState = SecondaryLocalState{make(map[int64]bool)}
+						//Reset Trie
+						conn, err := grpc.Dial(trieId, grpc.WithInsecure())
+						if err != nil {
+							log.Printf("Error while connecting to Self Trie %v error from %v - %v", trieId, replId, err)
+						} else {
+							trie := pb.NewTrieStoreClient(conn)
+							log.Printf("Sending Reset Trie request to trie %v", trieId)
+							_, err := trie.Reset(context.Background(), &pb.Empty{})
+							if err != nil {
+								log.Printf("Error while resetting trie %v : %v", trieId, err)
+							}
+							err = conn.Close()
+							if err != nil {
+								log.Printf("Error while closing connection to trie %v - %v", trieId, err)
+							}
+						}
 					}
 				} else {
 					log.Printf("I am already Primary. Don't need to change")
@@ -242,10 +264,10 @@ func serve(s *TrieStore, id string, replPort int, triePort int, managerPortStrin
 					if !acknowledged {
 						conn, err := grpc.Dial(managerPortString, grpc.WithInsecure())
 						if err != nil {
-							log.Printf("Error while connecting to manager %v from %v error - %v", managerPortString, id, err)
+							log.Printf("Error while connecting to manager %v from %v error - %v", managerPortString, replId, err)
 						} else {
 							manager := pb.NewManagerClient(conn)
-							_, err := manager.IntroduceSelf(context.Background(), &pb.IntroInfo{ReplId: "127.0.0.1:" + fmt.Sprintf("%v", replPort), TrieId: "127.0.0.1:" + fmt.Sprintf("%v", triePort)})
+							_, err := manager.IntroduceSelf(context.Background(), &pb.IntroInfo{ReplId: replId, TrieId: trieId})
 							if err != nil {
 								log.Printf("Error while introducing self to Manager : %v", err)
 							}
@@ -285,7 +307,7 @@ func serve(s *TrieStore, id string, replPort int, triePort int, managerPortStrin
 
 								err = conn.Close()
 								if err != nil {
-									log.Printf("Error while closing connection between %v and %v : %v", id, secondaryId, err)
+									log.Printf("Error while closing connection between %v and %v : %v", replId, secondaryId, err)
 								}
 							}
 						}
@@ -330,7 +352,7 @@ func serve(s *TrieStore, id string, replPort int, triePort int, managerPortStrin
 
 									err = conn.Close()
 									if err != nil {
-										log.Printf("Error while closing connection between %v and %v : %v", id, secondaryId, err)
+										log.Printf("Error while closing connection between %v and %v : %v", replId, secondaryId, err)
 									}
 								}(secondaryConnection, secondaryId)
 								log.Printf("Sent ReplicateReq (%v,%v) deom %v to %v", requestNumber, word, primaryId, secondaryId)
@@ -371,10 +393,10 @@ func serve(s *TrieStore, id string, replPort int, triePort int, managerPortStrin
 						k.Table = append(k.Table, &t)
 					}
 
-					k.Id = &pb.PortInfo{ReplId: id}
+					k.Id = &pb.PortInfo{ReplId: replId}
 					conn, err := grpc.Dial(managerPortString, grpc.WithInsecure(), grpc.WithBlock(), grpc.WithTimeout(time.Duration(1000)*time.Millisecond))
 					if err != nil {
-						log.Printf("Error while connecting to manager %v from %v error - %v", managerPortString, id, err)
+						log.Printf("Error while connecting to manager %v from %v error - %v", managerPortString, replId, err)
 					} else {
 						manager := pb.NewManagerClient(conn)
 						_, err := manager.HeartbeatAck(context.Background(), &k)
@@ -406,40 +428,39 @@ func serve(s *TrieStore, id string, replPort int, triePort int, managerPortStrin
 
 						conn, err := connectToPeer(primaryId)
 						if err != nil {
-							log.Printf("Cannot connect to primary %v from %v with error %v", primaryId, id, err)
+							log.Printf("Cannot connect to primary %v from %v with error %v", primaryId, replId, err)
 						} else {
 							primaryConnection := pb.NewReplClient(conn)
 							_, err := primaryConnection.AckPrimary(context.Background(),
-								&pb.UpdateSecondaryTrieReply{RequestNumber: req.arg.GetRequestNumber(), Success: true, Peer: id})
+								&pb.UpdateSecondaryTrieReply{RequestNumber: req.arg.GetRequestNumber(), Success: true, Peer: replId})
 							if err != nil {
 								repl.RequestChan <- req
-								log.Printf("Error while sending Ack from %v to %v : %v ", id, primaryId, err)
+								log.Printf("Error while sending Ack from %v to %v : %v ", replId, primaryId, err)
 								log.Printf("Placing the request back onto own channel")
 							} else {
-								log.Printf("Sent Ack to primary %v from %v", primaryId, id)
+								log.Printf("Sent Ack to primary %v from %v", primaryId, replId)
 							}
 							err = conn.Close()
 							if err != nil {
-								log.Printf("Error while closing connection between %v and %v : %v", id, primaryId, err)
+								log.Printf("Error while closing connection between %v and %v : %v", replId, primaryId, err)
 							}
 						}
 					}
 				}
 
 			case addSec := <- repl.AddSecondaryChan:
-				log.Printf("Adding Secondary %v to list of primary %v", addSec.arg.SecondaryReplId.ReplId, id)
+				log.Printf("Adding Secondary %v to list of primary %v", addSec.arg.SecondaryReplId.ReplId, replId)
 				sec := SecondaryGlobalState{requests:make(map[int64] string)}
 				secondaryGlobalStates[addSec.arg.SecondaryReplId.ReplId] = &sec
 
-				var trieId = "127.0.0.1:" + fmt.Sprintf("%v", triePort)
 				conn, err := connectToPeer(trieId)
 				if err != nil {
-					log.Printf("Cannot connect to Trie %v from primary %v with error %v", trieId, id, err)
+					log.Printf("Cannot connect to Trie %v from primary %v with error %v", trieId, replId, err)
 				} else {
 					trieConnection := pb.NewTrieStoreClient(conn)
 					_, err := trieConnection.UpdateNewSecondary(context.Background(),addSec.arg.SecondaryTrielId)
 					if err != nil {
-						log.Printf("Error while contacting trie %v from %v for replication, placing request back on own channel : %v", trieId, id, err)
+						log.Printf("Error while contacting trie %v from %v for replication, placing request back on own channel : %v", trieId, replId, err)
 						log.Printf("Placing the request back onto own channel")
 						repl.AddSecondaryChan <- addSec
 					} else {
@@ -447,7 +468,7 @@ func serve(s *TrieStore, id string, replPort int, triePort int, managerPortStrin
 					}
 					err = conn.Close()
 					if err != nil {
-						log.Printf("Error while closing connection between %v and %v : %v", id, primaryId, err)
+						log.Printf("Error while closing connection between %v and %v : %v", replId, primaryId, err)
 					}
 				}
 
@@ -457,7 +478,7 @@ func serve(s *TrieStore, id string, replPort int, triePort int, managerPortStrin
 
 
 			case delSec := <- repl.DeleteSecondaryChan:
-				log.Printf("Deleting Secondary %v from list of primary %v", delSec.arg.SecondaryId.ReplId, id)
+				log.Printf("Deleting Secondary %v from list of primary %v", delSec.arg.SecondaryId.ReplId, replId)
 				delete(secondaryGlobalStates, delSec.arg.SecondaryId.ReplId)
 
 		}

@@ -267,8 +267,6 @@ func manage (manage *Manager) {
 									}
 								}
 
-								//TODO : Update new added secondary to primary
-
 								//Logic for making secondary
 								if updatedPrimary {
 									log.Printf("Informing Secondary %v about it new primary %v", standbyServer.ReplId, primaryKey)

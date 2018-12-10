@@ -259,6 +259,11 @@ type TrieStore struct {
 	id string
 }
 
+func (s *TrieStore) Reset(ctx context.Context, arg *pb.Empty) (*pb.Empty, error) {
+	s.root = createTrieNode()
+	return &pb.Empty{}, nil
+}
+
 func (s *TrieStore) CheckSplit(ctx context.Context, arg *pb.MaxTrieSize) (*pb.Empty, error) {
 	log.Printf("Checking if split required")
 	go func() {

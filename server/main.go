@@ -17,15 +17,15 @@ func main() {
 	//var r *rand.Rand
 	var seed int64
 
-	var clientPort int
+	var triePort int
 	var replPort int
 	var managerPort int
 
 	flag.Int64Var(&seed, "seed", -1,
 		"Seed for random number generator, values less than 0 result in use of time")
-	flag.IntVar(&clientPort, "port", 3000,
+	flag.IntVar(&triePort, "trie", 3000,
 		"Port on which server should listen to client requests")
-	flag.IntVar(&replPort, "raft", 3001,
+	flag.IntVar(&replPort, "repl", 3001,
 		"Port on which server should listen to Raft requests")
 	flag.IntVar(&managerPort, "manager", 9999,
 		"Port on which Repl Manager runs")
@@ -51,7 +51,7 @@ func main() {
 	log.Printf("Starting peer with ID %s", id)
 
 	// Convert port to a string form
-	portString := fmt.Sprintf(":%d", clientPort)
+	portString := fmt.Sprintf(":%d", triePort)
 	// Create socket that listens on the supplied port
 	c, err := net.Listen("tcp", portString)
 	if err != nil {
@@ -75,14 +75,14 @@ func main() {
 
 	// Initialize KVStore
 
-	store := TrieStore{C: make(chan InputChannelType), root: createTrieNode(), manager: managerPortString, id: fmt.Sprintf("%s:%d", name, clientPort)}
+	store := TrieStore{C: make(chan InputChannelType), root: createTrieNode(), manager: managerPortString, id: fmt.Sprintf("%s:%d", name, triePort)}
 
-	go serve(&store,id, replPort, clientPort, managerPortString)
+	go serve(&store, replPort, triePort, name, managerPortString)
 
 	// Tell GRPC that store will be serving requests for the KvStore service and should use store (defined on line 23)
 	// as the struct whose methods should be called in response.
 	pb.RegisterTrieStoreServer(s, &store)
-	log.Printf("Going to listen on port %v", clientPort)
+	log.Printf("Going to listen on port %v", triePort)
 	// Start serving, this will block this function and only return when done.
 	if err := s.Serve(c); err != nil {
 		log.Fatalf("Failed to serve %v", err)
