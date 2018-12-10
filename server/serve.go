@@ -6,7 +6,6 @@ import (
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"log"
-	"math/rand"
 	"net"
 	"time"
 )
@@ -109,14 +108,14 @@ func (r *Repl) AckPrimary(ctx context.Context, arg *pb.UpdateSecondaryTrieReply 
 }
 
 // Compute a random duration in milliseconds
-func randomDuration(r *rand.Rand) time.Duration {
+func randomDuration() time.Duration {
 	// Constant
 	const Duration = 2000
 	return time.Duration(Duration) * time.Millisecond
 }
 
 // Restart the supplied timer using a random timeout based on function above
-func restartTimer(timer *time.Timer, r *rand.Rand) {
+func restartTimer(timer *time.Timer) {
 	stopped := timer.Stop()
 	// If stopped is false that means someone stopped before us, which could be due to the timer going off before this,
 	// in which case we just drain notifications.
@@ -127,7 +126,7 @@ func restartTimer(timer *time.Timer, r *rand.Rand) {
 		}
 
 	}
-	timer.Reset(randomDuration(r))
+	timer.Reset(randomDuration())
 }
 
 // Launch a GRPC service for this Repl peer.
@@ -158,7 +157,7 @@ func connectToPeer(peer string) (*grpc.ClientConn, error) {
 }
 
 // The main service loop. All modifications to the Trie are run through here.
-func serve(s *TrieStore, r *rand.Rand, id string, replPort int, triePort int, managerPortString string) {
+func serve(s *TrieStore, id string, replPort int, triePort int, managerPortString string) {
 
 	repl := Repl{
 		RequestChan: make(chan RequestArgs),
@@ -192,7 +191,7 @@ func serve(s *TrieStore, r *rand.Rand, id string, replPort int, triePort int, ma
 	var requestNumber int64 = 0
 	var primaryId = ""//"127.0.0.1:3003"
 	// Create a timer and start running it
-	timer := time.NewTimer(randomDuration(r))
+	timer := time.NewTimer(randomDuration())
 
 
 	var acknowledged = false
@@ -257,9 +256,45 @@ func serve(s *TrieStore, r *rand.Rand, id string, replPort int, triePort int, ma
 						}
 					}
 				} else if role == Primary {
-					//TODO : Send pending requests to Secondary again
+
+					//Sending pending requests to secondary
+
+					for secondaryId, pendingRequests := range secondaryGlobalStates {
+
+						log.Printf("For secondary %v Number of Pending Requests %v", secondaryId, len(pendingRequests.requests))
+						if len(pendingRequests.requests) > 0{
+
+							log.Printf("For secondary %v resending pending requests", secondaryId)
+
+							conn, err := connectToPeer(secondaryId)
+							if err != nil {
+								log.Printf("Cannot connect to Secondary %v with error %v ", secondaryId, err)
+							} else {
+								secondaryConnection := pb.NewReplClient(conn)
+								for r,w := range pendingRequests.requests{
+									log.Printf("resending Req: %v , Word: %v", r, w)
+
+
+									_, err := secondaryConnection.UpdateSecondary(context.Background(), &pb.UpdateSecondaryTrieRequest{Word: w, RequestNumber: r})
+									if err != nil {
+										log.Printf("Unable to replicate request number %v to secondary %v with error %v, will update next time.", r, secondaryId, err)
+									} else {
+										log.Printf("Sent ReplicateReq (%v,%v) deom %v to %v", r, w, primaryId, secondaryId)
+									}
+								}
+
+								err = conn.Close()
+								if err != nil {
+									log.Printf("Error while closing connection between %v and %v : %v", id, secondaryId, err)
+								}
+							}
+						}
+
+					}
+
+
 				}
-				restartTimer(timer, r)
+				restartTimer(timer)
 
 
 			case init := <- repl.InitChan:
@@ -360,6 +395,8 @@ func serve(s *TrieStore, r *rand.Rand, id string, replPort int, triePort int, ma
 
 			case req := <-repl.RequestChan:
 				// From secondary send ack to primary for update completed
+
+				//TODO : Update secondary only if request from registered primary. There may be 2 primaries, 1 old and 1 new
 				if role == Secondary {
 					// replicate and update selfstate
 					if _, ok := secondaryLocalState.completed[req.arg.GetRequestNumber()]; role == Secondary && !ok { //TODO: deal with concurrent Trie requests
@@ -393,7 +430,13 @@ func serve(s *TrieStore, r *rand.Rand, id string, replPort int, triePort int, ma
 				log.Printf("Adding Secondary %v to list of primary %v", addSec.arg.SecondaryId.ReplId, id)
 				sec := SecondaryGlobalState{requests:make(map[int64] string)}
 				secondaryGlobalStates[addSec.arg.SecondaryId.ReplId] = &sec
+
 				//TODO : Update this secondary from me !! Write this function
+
+
+
+
+
 
 			case delSec := <- repl.DeleteSecondaryChan:
 				log.Printf("Deleting Secondary %v from list of primary %v", delSec.arg.SecondaryId.ReplId, id)

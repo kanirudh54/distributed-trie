@@ -4,10 +4,8 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"math/rand"
 	"net"
 	"os"
-	"time"
 
 	"google.golang.org/grpc"
 
@@ -16,7 +14,7 @@ import (
 
 func main() {
 	// Argument parsing
-	var r *rand.Rand
+	//var r *rand.Rand
 	var seed int64
 
 	var clientPort int
@@ -35,11 +33,11 @@ func main() {
 	flag.Parse()
 
 	// Initialize the random number generator
-	if seed < 0 {
-		r = rand.New(rand.NewSource(time.Now().UnixNano()))
-	} else {
-		r = rand.New(rand.NewSource(seed))
-	}
+	//if seed < 0 {
+	//	r = rand.New(rand.NewSource(time.Now().UnixNano()))
+	//} else {
+	//	r = rand.New(rand.NewSource(seed))
+	//}
 
 	// Get hostname
 	name, err := os.Hostname()
@@ -79,7 +77,7 @@ func main() {
 
 	store := TrieStore{C: make(chan InputChannelType), root: createTrieNode(), manager: managerPortString, id: fmt.Sprintf("%s:%d", name, clientPort)}
 
-	go serve(&store, r, id, replPort, clientPort, managerPortString)
+	go serve(&store,id, replPort, clientPort, managerPortString)
 
 	// Tell GRPC that store will be serving requests for the KvStore service and should use store (defined on line 23)
 	// as the struct whose methods should be called in response.

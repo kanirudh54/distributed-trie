@@ -11,7 +11,12 @@ import (
 	"time"
 )
 
+//Global Table Mappings
+
+//prefix --> Primary Mapping
 var primaryMapping = make(map[string] string) //prefix --> primary
+
+//Repl Id --> Trie Id Mapping
 var replToTrieMapping = make(map[string] string) // Primary Id --> Trie Id Mapping
 
 
@@ -116,40 +121,39 @@ func restartTimer(timer *time.Timer, duration time.Duration) {
 
 func manage (manage *Manager) {
 
-
-
-	var table = make(map[string] map[string] int64) // primary --> secondaries:lag_counts
+	//Parameters
 	var maxSecondaries = 1 //Max Secondary for each primary
-
-	var primaryHB = make(map[string] int) //HeartBeat count of primaries
-
+	var maxLagCount = 50
 
 
-	//StandBy Table
-	standbyServers := make([] *pb.PortInfo, 0)
 
-	//Reserved Servers
-	reservedServers := make([] *pb.PortInfo, 0)
-
-	//In Progress Splitting
-	inProgressSplitting := make(map[string] string)
-
-	//trie id --> split_word
-	trieIdtoWordMapping := make(map[string] string)
+	//Tables
+	var table = make(map[string] map[string] int64) //Primary --> Secondary : Lag Counts Table
+	var primaryHB = make(map[string] int) //Primary -> HeartBeat count table
+	var standbyServers = make([] *pb.PortInfo, 0) //StandBy Table
+	var reservedServers = make([] *pb.PortInfo, 0) //Reserved Servers
+	var failedServers = make([] string, 0) // List of servers which have failed
+	var inProgressSplitting = make(map[string] string) //In Progress Splitting
+	var trieIdtoWordMapping = make(map[string] string) //trie id --> split_word
 
 
+
+	//Timers
 	heartBeatTimerDuration := 1000
 	allocationTimerDuration := 10000
 	splitTimerDuration := 20000
+	secondaryFailureHandlingTimerDuration := 5000
+	recoverFailedServerTimerDuration := 10000
 
 
 	heartBeatTimer := time.NewTimer(time.Duration(heartBeatTimerDuration) * time.Millisecond)
 	allocationTimer := time.NewTimer(time.Duration(allocationTimerDuration) * time.Millisecond)
 	splitTimer := time.NewTimer(time.Duration(splitTimerDuration) * time.Millisecond)
+	secondaryFailureTimer := time.NewTimer(time.Duration(secondaryFailureHandlingTimerDuration) * time.Millisecond)
+	recoverFailedServerTimer := time.NewTimer(time.Duration(recoverFailedServerTimerDuration) * time.Millisecond)
 
 
 
-	//go RunManageServer(&manage, managerPort)
 
 	log.Printf("Starting Manager")
 
@@ -323,6 +327,49 @@ func manage (manage *Manager) {
 
 				restartTimer(splitTimer, time.Duration(splitTimerDuration))
 
+			case <- secondaryFailureTimer.C:
+				//Handling Secondary Failures
+
+				//TODO : If setting to standby, Manager
+
+				log.Printf("Checking for failed secondaries")
+				for primaryId, secondaryLagCounts := range table{
+					for secondaryId, lagCount := range secondaryLagCounts{
+						if lagCount > int64(maxLagCount) {
+							log.Printf("For Primary %v, Secondary %v is unresponsive, lag count %v > max permitted lag count %v", primaryId, secondaryId, lagCount, maxLagCount)
+							log.Printf("Deleting secondary %v from Primary %v", secondaryId, primaryId)
+							conn, err := grpc.Dial(primaryId, grpc.WithInsecure())
+							if err != nil {
+								log.Printf("Error while connecting to Primary %v from Manager error - %v", primaryId, err)
+							} else {
+								trie := pb.NewReplClient(conn)
+								_, err := trie.DeleteSecondaryFromPrimaryList(context.Background(), &pb.DeleteSecondaryMessage{SecondaryId:&pb.PortInfo{ReplId:secondaryId}})
+								if err != nil {
+									log.Printf("Deleting secondary %v from primary %v : %v", secondaryId, primaryId, err)
+								} else {
+									failedServers = append(failedServers, secondaryId)
+									delete(table[primaryId], secondaryId)
+								}
+								err = conn.Close()
+								if err != nil {
+									log.Printf("Error while closing connection to pprimary %v from manager - %v", primaryId, err)
+								}
+							}
+						}
+					}
+				}
+
+				restartTimer(secondaryFailureTimer, time.Duration(secondaryFailureHandlingTimerDuration))
+
+
+
+			case <- recoverFailedServerTimer.C:
+				//Try to recover failed servers
+				log.Printf("Trying to recover failed server and put them in standby mode")
+				for _, failedServerId := range failedServers{
+					log.Printf("Server %v is failed. Trying to Recover it", failedServerId)
+					//TODO : Check if failed server in standby/primary or secondary list - If yes then remove from failed list, else connect and try to change it to standby
+				}
 
 
 

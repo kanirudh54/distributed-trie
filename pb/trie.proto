@@ -189,4 +189,8 @@ service TrieStore {
     rpc Create(SplitWordRequest) returns (Empty) {} //Message 4
     rpc splitTrieCreatedAck (Empty) returns (Empty) {} // Message 6
 
+
+    rpc updateNewSecondary(portInfo) returns (Empty) {} // Update New Secondary to self
+
+
 }
