@@ -4,7 +4,6 @@ import (
 	"../pb"
 	"container/heap"
 	_ "container/heap"
-	"fmt"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"log"
@@ -214,12 +213,12 @@ func getTopSuggestions(result []Result, maxSug int) [] Result{
 }
 
 
-type SplitResult struct {
+/*type SplitResult struct {
 	prefix string
 	node *Trie
-}
+}*/
 
-func getSplitPoint(root* Trie, num int, prefix string) SplitResult {
+/*func getSplitPoint(root* Trie, num int, prefix string) SplitResult {
 	if root == nil{
 		return SplitResult{prefix:prefix, node:root}
 	}
@@ -240,7 +239,7 @@ func getSplitPoint(root* Trie, num int, prefix string) SplitResult {
 		}
 	}
 	return SplitResult{prefix:"", node:nil}
-}
+}*/
 
 
 
@@ -364,6 +363,52 @@ func (s *TrieStore) SplitTrieCreatedAck(ctx context.Context, arg *pb.Empty) (*pb
 	go func() {
 		s.root = createTrie(results)
 		results = make([] Result, 0)
+	}()
+	return &pb.Empty{}, nil
+}
+
+func (s *TrieStore) ReplicateTrie(ctx context.Context, arg *pb.ReplicateTrieRequest) (*pb.Empty, error) {
+	log.Printf("Updating Secondary Trie %v", s.id)
+	go func() {
+		var result = make([] Result, 0)
+		for _, word := range arg.Words {
+			result = append(result, Result{word: word.Word, count: word.Count, index: int(word.Index)})
+		}
+		s.root = createTrie(result)
+		log.Printf("Secondary Trie Updated successfully")
+	}()
+	return &pb.Empty{}, nil
+}
+
+func (s *TrieStore) UpdateNewSecondary(ctx context.Context, arg *pb.PortInfo) (*pb.Empty, error) {
+	log.Printf("Updating Secondary Trie %v from %v", arg.ReplId, s.id)
+	go func(){
+		results = autoComplete(s.root, "")
+		conn, err := grpc.Dial(arg.ReplId, grpc.WithInsecure())
+		if err != nil {
+			log.Printf("Error while connecting to Trie %v error - %v", arg.ReplId, err)
+		} else {
+			trie := pb.NewTrieStoreClient(conn)
+
+			var trieWords= make([] *pb.SplitWord, 0)
+			for _, result := range results {
+				trieWords = append(trieWords, &pb.SplitWord{Word: result.word, Count: result.count, Index: int64(result.index)})
+			}
+
+			var request= pb.ReplicateTrieRequest{Words: trieWords}
+
+			_, err := trie.ReplicateTrie(context.Background(), &request)
+			if err != nil {
+				log.Printf("Error while sending Trie Words list to another trie for replication %v", err)
+				//TODO : Put Request back on primary's channel ?
+			} else {
+				log.Printf("Sent new Trie Words to add")
+			}
+			err = conn.Close()
+			if err != nil {
+				log.Printf("Error while closing connection to manager - %v", err)
+			}
+		}
 	}()
 	return &pb.Empty{}, nil
 }

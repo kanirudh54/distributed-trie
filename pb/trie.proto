@@ -117,7 +117,8 @@ message primaryInitMessage{
 }
 
 message addSecondaryMessage{
-    portInfo secondaryId = 1;
+    portInfo secondaryReplId = 1;
+    portInfo secondaryTrielId = 2;
 }
 
 message deleteSecondaryMessage{
@@ -133,6 +134,10 @@ message SplitWord{
 message SplitWordRequest{
     repeated SplitWord words = 1;
     string id = 2;
+}
+
+message ReplicateTrieRequest{
+    repeated SplitWord words = 1;
 }
 
 message MaxTrieSize{
@@ -191,6 +196,7 @@ service TrieStore {
 
 
     rpc updateNewSecondary(portInfo) returns (Empty) {} // Update New Secondary to self
+    rpc ReplicateTrie(ReplicateTrieRequest) returns (Empty) {} //Message 4
 
 
 }

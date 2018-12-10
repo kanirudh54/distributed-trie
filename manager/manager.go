@@ -13,10 +13,7 @@ import (
 
 //Global Table Mappings
 
-//prefix --> Primary Mapping
 var primaryMapping = make(map[string] string) //prefix --> primary
-
-//Repl Id --> Trie Id Mapping
 var replToTrieMapping = make(map[string] string) // Primary Id --> Trie Id Mapping
 
 
@@ -257,7 +254,7 @@ func manage (manage *Manager) {
 								} else {
 									primaryConn := pb.NewReplClient(primaryConnection)
 									_, err := primaryConn.AddSecondaryToPrimaryList(context.Background(),
-										&pb.AddSecondaryMessage{SecondaryId:standbyServer})
+										&pb.AddSecondaryMessage{SecondaryReplId:standbyServer, SecondaryTrielId:&pb.PortInfo{ReplId:replToTrieMapping[standbyServer.ReplId]}})
 									if err != nil {
 										log.Printf("Error while updating primary %v about new secondary %v, error %v", primaryKey, standbyServer.ReplId, err)
 									} else {

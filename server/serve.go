@@ -427,11 +427,29 @@ func serve(s *TrieStore, id string, replPort int, triePort int, managerPortStrin
 				}
 
 			case addSec := <- repl.AddSecondaryChan:
-				log.Printf("Adding Secondary %v to list of primary %v", addSec.arg.SecondaryId.ReplId, id)
+				log.Printf("Adding Secondary %v to list of primary %v", addSec.arg.SecondaryReplId.ReplId, id)
 				sec := SecondaryGlobalState{requests:make(map[int64] string)}
-				secondaryGlobalStates[addSec.arg.SecondaryId.ReplId] = &sec
+				secondaryGlobalStates[addSec.arg.SecondaryReplId.ReplId] = &sec
 
-				//TODO : Update this secondary from me !! Write this function
+				var trieId = "127.0.0.1:" + fmt.Sprintf("%v", triePort)
+				conn, err := connectToPeer(trieId)
+				if err != nil {
+					log.Printf("Cannot connect to Trie %v from primary %v with error %v", trieId, id, err)
+				} else {
+					trieConnection := pb.NewTrieStoreClient(conn)
+					_, err := trieConnection.UpdateNewSecondary(context.Background(),addSec.arg.SecondaryTrielId)
+					if err != nil {
+						log.Printf("Error while contacting trie %v from %v for replication, placing request back on own channel : %v", trieId, id, err)
+						log.Printf("Placing the request back onto own channel")
+						repl.AddSecondaryChan <- addSec
+					} else {
+						log.Printf("Sent Replication request to Trie %v", trieId)
+					}
+					err = conn.Close()
+					if err != nil {
+						log.Printf("Error while closing connection between %v and %v : %v", id, primaryId, err)
+					}
+				}
 
 
 
