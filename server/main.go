@@ -73,13 +73,13 @@ func main() {
 	log.Printf("Connected")
 
 
-	// Initialize KVStore
+	// Initialize Trie
 
 	store := TrieStore{C: make(chan InputChannelType), root: createTrieNode(), manager: managerPortString, id: fmt.Sprintf("%s:%d", name, triePort)}
 
 	go serve(&store, replPort, triePort, name, managerPortString)
 
-	// Tell GRPC that store will be serving requests for the KvStore service and should use store (defined on line 23)
+	// Tell GRPC that store will be serving requests for the Trie service and should use store (defined on line 23)
 	// as the struct whose methods should be called in response.
 	pb.RegisterTrieStoreServer(s, &store)
 	log.Printf("Going to listen on port %v", triePort)

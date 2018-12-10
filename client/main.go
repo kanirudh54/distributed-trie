@@ -30,17 +30,17 @@ func add(word string, manager pb.ManagerClient) {
 			log.Fatalf("Failed to dial GRPC Trie %v :  %v", triePort.ReplId, err)
 		}
 		log.Printf("Connected to Trie Port")
-		// Create a KvStore client
-		kvc := pb.NewTrieStoreClient(conn)
+		// Create a Trie client
+		trie := pb.NewTrieStoreClient(conn)
 
 
 		putReq := &pb.Key{Key: word}
-		res, err := kvc.Set(context.Background(), putReq)
+		res, err := trie.Set(context.Background(), putReq)
 		if err != nil {
 			log.Fatalf("Put error : %v", err)
 		}
-		//log.Printf("Got response key: \"%v\" value:\"%v\"", res.GetKv().Key, res.GetKv().Value)
-		log.Printf("Got response for set '%v' : \"%v\" value:\"%v\"", word, res.GetSuggestions(), res.GetS())
+
+		log.Printf("Got response for set '%v' : \"%v\"", word, res.GetSuggestions())
 
 	}
 }
@@ -59,16 +59,16 @@ func get(word string, manager pb.ManagerClient) {
 			log.Fatalf("Failed to dial GRPC Trie %v :  %v", triePort.ReplId, err)
 		}
 		log.Printf("Connected to Trie Port")
-		// Create a KvStore client
-		kvc := pb.NewTrieStoreClient(conn)
+		// Create a Trie client
+		trie := pb.NewTrieStoreClient(conn)
 
 
 		req := &pb.Key{Key: word}
-		res, err := kvc.Get(context.Background(), req)
+		res, err := trie.Get(context.Background(), req)
 		if err != nil {
 			log.Fatalf("Request error %v", err)
 		}
-		log.Printf("Got response for get '%v' : \"%v\" value:\"%v\"", word, res.GetSuggestions(), res.GetS())
+		log.Printf("Got response for get '%v' : \"%v\" ", word, res.GetSuggestions())
 
 	}
 
@@ -101,16 +101,6 @@ func main() {
 	}
 	log.Printf("Connected")
 
-
-	/*
-	// Clear KVC
-	_, err = kvc.Clear(context.Background(), &pb.Empty{})
-	if err != nil {
-		log.Fatalf("Could not clear")
-	}
-	//log.Printf("Got redirect %v", res.GetRedirect())
-	*/
-	// Put setting hello -> 1
 
 
 	add("hello", manager)

@@ -1,3 +1,3 @@
 go get -v ./...
 go build .
-./server -peer "127.0.0.1:3003" -port 3004 -raft 3001
+-trie 3003 -repl 3004 -manager 9999

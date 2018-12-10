@@ -55,6 +55,10 @@ type DeleteSecondaryArgs struct {
 	arg *pb.DeleteSecondaryMessage
 }
 
+type UpdateSecondaryAboutPrimaryArgs struct {
+	arg *pb.PortInfo
+}
+
 
 
 // Struct off of which we shall hang the Raft service
@@ -69,6 +73,7 @@ type Repl struct {
 	HeartbeatChan chan HeartbeatArgs
 	AddSecondaryChan chan AddSecondaryArgs
 	DeleteSecondaryChan chan DeleteSecondaryArgs
+	UpdateSecondaryAboutPrimaryChan chan UpdateSecondaryAboutPrimaryArgs
 
 }
 
@@ -109,6 +114,11 @@ func (r *Repl) Heartbeat(ctx context.Context, arg *pb.HeartbeatMessage) (*pb.Emp
 
 func (r *Repl) UpdateSecondary(ctx context.Context, arg *pb.UpdateSecondaryTrieRequest) (*pb.Empty, error) {
 	r.RequestChan <- RequestArgs{arg: arg}
+	return &pb.Empty{}, nil
+}
+
+func (r *Repl) UpdateSecondaryAboutPrimary(ctx context.Context, arg *pb.PortInfo) (*pb.Empty, error) {
+	r.UpdateSecondaryAboutPrimaryChan <- UpdateSecondaryAboutPrimaryArgs{arg:arg}
 	return &pb.Empty{}, nil
 }
 
@@ -179,6 +189,7 @@ func serve(s *TrieStore, replPort int, triePort int, serviceIP string, managerPo
 		MakeStandByChan: make(chan MakeStandByArgs),
 		AddSecondaryChan: make(chan AddSecondaryArgs),
 		DeleteSecondaryChan: make(chan DeleteSecondaryArgs),
+		UpdateSecondaryAboutPrimaryChan: make(chan UpdateSecondaryAboutPrimaryArgs),
 	}
 
 	var replId = serviceIP + fmt.Sprintf(":%v", replPort)
@@ -225,12 +236,23 @@ func serve(s *TrieStore, replPort int, triePort int, serviceIP string, managerPo
 
 		select {
 
-
+			//TODO : When Secondary becomes primary, should it simply start communication with other secondaries, or should it also update those secondaries to tself ?
+			//Right now, other secondaries states don't change, they start where they were, and this secondary updates them
 			case prim := <- repl.MakePrimaryChan:
 				// When manager calls MakePrimary
 				if role != Primary {
 					if role == Secondary {
+						//reset Request Number
 						requestNumber = int64(len(secondaryLocalState.completed))
+
+						//Set States to point to secondaries sent by manager
+						secondaryGlobalStates = make(map[string] *SecondaryGlobalState)
+						for _, secondary := range prim.arg.Secondaries{
+							sec := SecondaryGlobalState{requests:make(map[int64] string)}
+							secondaryGlobalStates[secondary.ReplId] = &sec
+						}
+						secondaryLocalState = SecondaryLocalState{make(map[int64]bool)}
+
 					} else if role == StandBy {
 						requestNumber = prim.arg.RequestNumber
 						//Reset State
@@ -246,19 +268,22 @@ func serve(s *TrieStore, replPort int, triePort int, serviceIP string, managerPo
 							_, err := trie.Reset(context.Background(), &pb.Empty{})
 							if err != nil {
 								log.Printf("Error while resetting trie %v : %v", trieId, err)
+								//TODO : Error while resetting trie. is it fine, or should we try again ?
 							}
 							err = conn.Close()
 							if err != nil {
 								log.Printf("Error while closing connection to trie %v - %v", trieId, err)
 							}
 						}
+
 					}
 				} else {
 					log.Printf("I am already Primary. Don't need to change")
+					//TODO : Primary --> Primary : What about tables ? I think we should reset them here..
+					secondaryLocalState = SecondaryLocalState{make(map[int64]bool)}
+					secondaryGlobalStates = make(map[string]*SecondaryGlobalState)
 				}
-				//We Update Tables
-				secondaryGlobalStates = make(map[string]*SecondaryGlobalState)
-				secondaryLocalState = SecondaryLocalState{make(map[int64]bool)}
+
 				role = Primary
 
 			case sec := <- repl.MakeSecondaryChan:
@@ -318,7 +343,7 @@ func serve(s *TrieStore, replPort int, triePort int, serviceIP string, managerPo
 									log.Printf("resending Req: %v , Word: %v", r, w)
 
 
-									_, err := secondaryConnection.UpdateSecondary(context.Background(), &pb.UpdateSecondaryTrieRequest{Word: w, RequestNumber: r})
+									_, err := secondaryConnection.UpdateSecondary(context.Background(), &pb.UpdateSecondaryTrieRequest{Word: w, RequestNumber: r, PrimaryId:replId})
 									if err != nil {
 										log.Printf("Unable to replicate request number %v to secondary %v with error %v, will update next time.", r, secondaryId, err)
 									} else {
@@ -366,7 +391,7 @@ func serve(s *TrieStore, replPort int, triePort int, serviceIP string, managerPo
 								secondaryConnection := pb.NewReplClient(conn)
 
 								go func(c pb.ReplClient, p string) {
-									_, err := c.UpdateSecondary(context.Background(), &pb.UpdateSecondaryTrieRequest{Word: word, RequestNumber: requestNumber})
+									_, err := c.UpdateSecondary(context.Background(), &pb.UpdateSecondaryTrieRequest{Word: word, RequestNumber: requestNumber, PrimaryId:replId})
 									if err != nil {
 										log.Printf("Unable to replicate request number %v to secondary %v with error %v, will update next time.", requestNumber, p, err)
 									}
@@ -494,13 +519,21 @@ func serve(s *TrieStore, replPort int, triePort int, serviceIP string, managerPo
 				}
 
 
-
-
-
-
 			case delSec := <- repl.DeleteSecondaryChan:
 				log.Printf("Deleting Secondary %v from list of primary %v", delSec.arg.SecondaryId.ReplId, replId)
 				delete(secondaryGlobalStates, delSec.arg.SecondaryId.ReplId)
+
+
+			case arg := <- repl.UpdateSecondaryAboutPrimaryChan:
+				log.Printf("Received message from manager to update primary from %v to %v", primaryId, arg.arg.ReplId)
+				primaryId = arg.arg.ReplId
+
+				//reset Local logs as new primary will give new request numbers.
+				secondaryLocalState = SecondaryLocalState{make(map[int64]bool)}
+
+				//TODO : Should I send ack for this ? What if this secondary does not get a request ?
+				//Primary will know about it. It will slowly lag behind, and finally manager will delete it.
+				//So, I think it is fine.
 
 		}
 	}

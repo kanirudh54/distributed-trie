@@ -71,6 +71,7 @@ message lookupTrieReply {
 message updateSecondaryTrieRequest{
 	string word = 1;
 	int64 requestNumber = 2;
+    string primaryId = 3;
 }
 
 message updateSecondaryTrieReply{
@@ -163,6 +164,9 @@ service Repl {
 
     rpc DeleteSecondaryFromPrimaryList(deleteSecondaryMessage) returns (Empty) {}
     rpc AddSecondaryToPrimaryList(addSecondaryMessage) returns (Empty) {}
+
+
+    rpc UpdateSecondaryAboutPrimary(portInfo) returns (Empty) {}
 
 
 }

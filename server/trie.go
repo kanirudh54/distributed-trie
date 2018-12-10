@@ -472,12 +472,6 @@ func (s *TrieStore) SetInternal(k string) pb.Result {
 
 }
 
-//// Used internally, this function clears a kv store. Assumes no racing calls.
-//func (s *KVStore) ClearInternal() pb.Result {
-//	s.store = make(map[string]int64)
-//	return pb.Result{Result: &pb.Result_S{S: &pb.Success{}}}
-//}
-
 
 func (s *TrieStore) HandleCommand(op InputChannelType) {
 	switch c := op.command; c.Operation {

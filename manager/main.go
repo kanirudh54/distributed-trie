@@ -59,11 +59,6 @@ func main() {
 
 	go manage(&manager)
 
-	// Tell GRPC that s will be serving requests for the KvStore service and should use store (defined on line 23)
-	// as the struct whose methods should be called in response.
-
-	//log.Printf("Going to listen on port %v", managerPort)
-	//// Start serving, this will block this function and only return when done.
 	if err := s.Serve(c); err != nil {
 		log.Fatalf("Failed to serve %v", err)
 	}

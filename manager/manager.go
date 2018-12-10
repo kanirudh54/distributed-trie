@@ -119,9 +119,10 @@ func restartTimer(timer *time.Timer, duration time.Duration) {
 func manage (manage *Manager) {
 
 	//Parameters
-	var maxSecondaries = 1 //Max Secondary for each primary
+	var maxSecondaries = 3 //Max Secondary for each primary
 	var maxLagCount = 50
 	var maxPrimaryHeartBeatMiss = 10
+	var maxTrieSize = 10
 
 
 
@@ -268,6 +269,27 @@ func manage (manage *Manager) {
 										log.Printf("Error while closing Connection in Creating Primary %v - %v", minLagSecondaryId, err)
 									}
 
+									if !fromStandBy {
+										for _, secondary := range secondaries {
+											//Inform secondary about new primary
+											conn, err := grpc.Dial(secondary.ReplId, grpc.WithInsecure())
+											if err != nil {
+												log.Printf("Error while connecting to secondary %v from new primary %v : %v", secondary.ReplId, minLagSecondaryId, err)
+											} else {
+												sec := pb.NewReplClient(conn)
+												log.Printf("Sending Update Primary Request to Secondary %v", secondary.ReplId)
+												_, err := sec.UpdateSecondaryAboutPrimary(context.Background(), &pb.PortInfo{ReplId:minLagSecondaryId})
+												if err != nil {
+													log.Printf("Error while updating primary info %v", err)
+												}
+												err = conn.Close()
+												if err != nil {
+													log.Printf("Error while closing connection to secondary %v - %v", secondary.ReplId, err)
+												}
+											}
+										}
+									}
+
 								}
 
 							}
@@ -298,7 +320,8 @@ func manage (manage *Manager) {
 						} else {
 							//Make connection, Call RPC, and immediately close connection
 							conn := pb.NewReplClient(connection)
-							_, err := conn.MakePrimary(context.Background(), &pb.PrimaryInitMessage{RequestNumber:0})
+							var secondaries = make([] *pb.PortInfo, 0)
+							_, err := conn.MakePrimary(context.Background(), &pb.PrimaryInitMessage{RequestNumber:0, Secondaries:secondaries})
 							if err != nil {
 								log.Printf("Error while calling Make Primary RPC for %v, error - %v", standbyServer.ReplId, err)
 							}
@@ -390,7 +413,7 @@ func manage (manage *Manager) {
 							log.Printf("Error while connecting to Trie %v from Manager error - %v", trieId, err)
 						} else {
 							trie := pb.NewTrieStoreClient(conn)
-							_, err := trie.CheckSplit(context.Background(), &pb.MaxTrieSize{Length: 10})
+							_, err := trie.CheckSplit(context.Background(), &pb.MaxTrieSize{Length: int64(maxTrieSize)})
 							if err != nil {
 								log.Printf("Error while sending check sploit request to Trie %v : %v", trieId, err)
 							}
