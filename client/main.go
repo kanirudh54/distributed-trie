@@ -131,6 +131,32 @@ func main() {
 
 	})
 
+	//add("who is president of india ?", manager)
+	//add("who is president of usa ?", manager)
+	//add("who is president of indonesia ?", manager)
+	//add("who is president of iran ?", manager)
+	//add("who is president of zimbabwe ?", manager)
+	//add("who is queen of england ?", manager)
+	//add("who is cm of rajasthan?", manager)
+	//add("who is pm of india ?", manager)
+	//add("who is justin beiber?", manager)
+	//add("who is justin beiber of india?", manager)
+	//add("why people sleep ??", manager)
+	//add("what is democray?", manager)
+	//add("who was adolf hitler?", manager)
+	//add("when did MJ die ?", manager)
+	//add("what is CIMS ?", manager)
+	//add("where is NYU ?", manager)
+	//add("where is NYC?", manager)
+	//add("who am I ?", manager)
+
+
+
+
+
+
+
+
 	log.Fatal(http.ListenAndServe(":9000", nil))
 
 }

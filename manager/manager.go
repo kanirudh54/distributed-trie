@@ -140,7 +140,7 @@ func restartTimer(timer *time.Timer, duration time.Duration) {
 func manage (manage *Manager) {
 
 	//Parameters
-	var maxSecondaries = 1 //Max Secondary for each primary
+	var maxSecondaries = 3 //Max Secondary for each primary
 	var maxLagCount = 50
 	var maxPrimaryHeartBeatMiss = 10
 	var maxTrieSize = 5
