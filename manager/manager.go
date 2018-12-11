@@ -463,8 +463,8 @@ func manage (manage *Manager) {
 							if err != nil {
 								log.Printf("Error while connecting to Primary %v from Manager error - %v", primaryId, err)
 							} else {
-								trie := pb.NewReplClient(conn)
-								_, err := trie.DeleteSecondaryFromPrimaryList(context.Background(), &pb.DeleteSecondaryMessage{SecondaryId:&pb.PortInfo{ReplId:secondaryId}})
+								repl := pb.NewReplClient(conn)
+								_, err := repl.DeleteSecondaryFromPrimaryList(context.Background(), &pb.DeleteSecondaryMessage{SecondaryId:&pb.PortInfo{ReplId:secondaryId}})
 								if err != nil {
 									log.Printf("Deleting secondary %v from primary %v : %v", secondaryId, primaryId, err)
 								} else {

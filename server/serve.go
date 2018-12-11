@@ -236,7 +236,6 @@ func serve(s *TrieStore, replPort int, triePort int, serviceIP string, managerPo
 
 		select {
 
-			//TODO : When Secondary becomes primary, should it simply start communication with other secondaries, or should it also update those secondaries to tself ?
 			//Right now, other secondaries states don't change, they start where they were, and this secondary updates them
 			case prim := <- repl.MakePrimaryChan:
 				// When manager calls MakePrimary
