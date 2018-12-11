@@ -30,9 +30,14 @@ message Error {
 // Represents an empty message
 message Empty {}
 
-// Represents an operation result.
+
 message Result {
-    repeated string suggestions = 1;
+    string suggestion = 1;
+    int64 count = 2;
+}
+// Represents an operation result.
+message Results {
+    repeated Result results = 1;
     Success s = 2;
 }
 
@@ -198,8 +203,8 @@ service Manager {
 service TrieStore {
     // Get the value associated with a key.
 
-    rpc Get (Key) returns (Result) {}
-    rpc Set (Key) returns (Result) {}
+    rpc Get (Key) returns (Results) {}
+    rpc Set (Key) returns (Results) {}
 
     rpc CheckSplit(MaxTrieSize) returns (Empty) {} //Message 0
     rpc AckSplitTrieRequest(Empty) returns (Empty) {} //Message 2

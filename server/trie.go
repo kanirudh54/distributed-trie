@@ -31,7 +31,7 @@ func (pq PriorityQueue) Len() int { return len(pq) }
 
 func (pq PriorityQueue) Less(i, j int) bool {
 	// We want Pop to give us the highest, not lowest, priority so we use greater than here.
-	return pq[i].count < pq[j].count
+	return pq[i].count > pq[j].count
 }
 
 func (pq PriorityQueue) Swap(i, j int) {
@@ -248,7 +248,7 @@ func getTopSuggestions(result []Result, maxSug int) [] Result{
 // The struct for data to send over channel
 type InputChannelType struct {
 	command  pb.Command
-	response chan pb.Result
+	response chan pb.Results
 }
 
 // The struct for key value stores.
@@ -418,9 +418,9 @@ func (s *TrieStore) UpdateNewSecondary(ctx context.Context, arg *pb.PortInfo) (*
 	return &pb.Empty{}, nil
 }
 
-func (s *TrieStore) Get(ctx context.Context, key *pb.Key) (*pb.Result, error) {
+func (s *TrieStore) Get(ctx context.Context, key *pb.Key) (*pb.Results, error) {
 	// Create a channel
-	c := make(chan pb.Result)
+	c := make(chan pb.Results)
 	// Create a request
 	r := pb.Command{Operation: pb.Op_GET, Arg: &pb.Command_Get{Get: key}}
 	// Send request over the channel
@@ -431,9 +431,9 @@ func (s *TrieStore) Get(ctx context.Context, key *pb.Key) (*pb.Result, error) {
 	return &result, nil
 }
 
-func (s *TrieStore) Set(ctx context.Context, in *pb.Key) (*pb.Result, error) {
+func (s *TrieStore) Set(ctx context.Context, in *pb.Key) (*pb.Results, error) {
 	// Create a channel
-	c := make(chan pb.Result)
+	c := make(chan pb.Results)
 	// Create a request
 	r := pb.Command{Operation: pb.Op_SET, Arg: &pb.Command_Set{Set: in}}
 	// Send request over the channel
@@ -448,27 +448,26 @@ func (s *TrieStore) Set(ctx context.Context, in *pb.Key) (*pb.Result, error) {
 
 // Used internally to generate a result for a get request. This function assumes that it is called from a single thread of
 // execution, and hence does not handle races.
-func (s *TrieStore) GetInternal(k string) pb.Result {
+func (s *TrieStore) GetInternal(k string) pb.Results {
 
 	var maxSug = 10
 	var res = getTopSuggestions(autoComplete(s.root, k), maxSug)
-	var suggestions [] string
+	var suggestions [] *pb.Result
 
 	for _,r := range res {
-		suggestions = append(suggestions, r.word)
+		suggestions = append(suggestions, &pb.Result{Suggestion:r.word, Count:r.count})
 	}
 
-	return pb.Result{Suggestions: suggestions, S: &pb.Success{}}
+	return pb.Results{Results:suggestions}
 
 }
 
 // Used internally to set and generate an appropriate result. This function assumes that it is called from a single
 // thread of execution and hence does not handle race conditions.
-func (s *TrieStore) SetInternal(k string) pb.Result {
+func (s *TrieStore) SetInternal(k string) pb.Results {
 
-	var suggestions [] string
 	updateTrie(s.root, k, 1)
-	return pb.Result{Suggestions: suggestions, S: &pb.Success{}}
+	return pb.Results{Results: nil, S: &pb.Success{}}
 
 }
 
@@ -488,7 +487,7 @@ func (s *TrieStore) HandleCommand(op InputChannelType) {
 	//	op.response <- result
 	default:
 		// Sending a blank response to just free things up, but we don't know how to make progress here.
-		op.response <- pb.Result{}
+		op.response <- pb.Results{}
 		log.Fatalf("Unrecognized operation %v", c)
 	}
 }
