@@ -258,21 +258,24 @@ func serve(s *TrieStore, replPort int, triePort int, serviceIP string, managerPo
 						//Reset State
 						secondaryGlobalStates = make(map[string] *SecondaryGlobalState)
 						secondaryLocalState = SecondaryLocalState{make(map[int64]bool)}
+
 						//Reset Trie
-						conn, err := grpc.Dial(trieId, grpc.WithInsecure())
-						if err != nil {
-							log.Printf("Error while connecting to Self Trie %v error from %v - %v", trieId, replId, err)
-						} else {
-							trie := pb.NewTrieStoreClient(conn)
-							log.Printf("Sending Reset Trie request to trie %v", trieId)
-							_, err := trie.Reset(context.Background(), &pb.Empty{})
+						if prim.arg.ResetTrie{
+							conn, err := grpc.Dial(trieId, grpc.WithInsecure())
 							if err != nil {
-								log.Printf("Error while resetting trie %v : %v", trieId, err)
-								//TODO : Error while resetting trie. is it fine, or should we try again ?
-							}
-							err = conn.Close()
-							if err != nil {
-								log.Printf("Error while closing connection to trie %v - %v", trieId, err)
+								log.Printf("Error while connecting to Self Trie %v error from %v - %v", trieId, replId, err)
+							} else {
+								trie := pb.NewTrieStoreClient(conn)
+								log.Printf("Sending Reset Trie request to trie %v", trieId)
+								_, err := trie.Reset(context.Background(), &pb.Empty{})
+								if err != nil {
+									log.Printf("Error while resetting trie %v : %v", trieId, err)
+									//TODO : Error while resetting trie. is it fine, or should we try again ?
+								}
+								err = conn.Close()
+								if err != nil {
+									log.Printf("Error while closing connection to trie %v - %v", trieId, err)
+								}
 							}
 						}
 

@@ -305,8 +305,8 @@ func (s *TrieStore) AckSplitTrieRequest(ctx context.Context, arg *pb.Empty) (*pb
 		} else {
 			manager := pb.NewManagerClient(conn)
 			var splitNumber= int(s.root.totalWords / 2)
-			var list= results[splitNumber+1:]
-			results = results[:splitNumber+1]
+			var list= results[splitNumber:]
+			results = results[:splitNumber]
 
 			var splitWords= make([] *pb.SplitWord, 0)
 			for _, result := range list {

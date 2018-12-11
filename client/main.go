@@ -2,6 +2,7 @@ package main
 
 import (
 	"../pb"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"golang.org/x/net/context"
@@ -9,7 +10,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"encoding/json"
 )
 
 func usage() {
@@ -19,13 +19,14 @@ func usage() {
 
 func add(word string, manager pb.ManagerClient) {
 
-	triePort, err := manager.GetTriePortInfo(context.Background(), &pb.Key{Key: word})
+	triePort, err := manager.GetTriePortInfoForSet(context.Background(), &pb.Key{Key: word})
 
-	log.Printf("Got trie port %v from set", triePort)
+	log.Printf("Got trie port %v from set for %v", triePort, word)
 
 	if err != nil {
 		log.Printf("Error while adding : %v", err)
 	} else {
+
 		conn, err := grpc.Dial(triePort.ReplId, grpc.WithInsecure())
 		//Ensure connection did not fail.
 		if err != nil {
@@ -49,32 +50,34 @@ func add(word string, manager pb.ManagerClient) {
 
 func get(word string, manager pb.ManagerClient) [] string{
 
-	triePort, err := manager.GetTriePortInfo(context.Background(), &pb.Key{Key: word})
-	log.Printf("Got trie port %v from get", triePort)
+	triePorts, err := manager.GetTriePortsInfoForGet(context.Background(), &pb.Key{Key: word})
+	suggestions := make([] string, 0)
 
 	if err != nil {
 		log.Printf("Error while adding : %v", err)
 	} else {
-		conn, err := grpc.Dial(triePort.ReplId, grpc.WithInsecure())
-		//Ensure connection did not fail.
-		if err != nil {
-			log.Fatalf("Failed to dial GRPC Trie %v :  %v", triePort.ReplId, err)
+		for _,triePort := range triePorts.Ports{
+			log.Printf("Got trie port %v from get for %v", triePort, word)
+			conn, err := grpc.Dial(triePort.ReplId, grpc.WithInsecure())
+			//Ensure connection did not fail.
+			if err != nil {
+				log.Fatalf("Failed to dial GRPC Trie %v :  %v", triePort.ReplId, err)
+			}
+			log.Printf("Connected to Trie Port")
+			// Create a Trie client
+			trie := pb.NewTrieStoreClient(conn)
+
+
+			req := &pb.Key{Key: word}
+			res, err := trie.Get(context.Background(), req)
+			if err != nil {
+				log.Fatalf("Request error %v", err)
+			} else {
+				suggestions = append(suggestions, res.GetSuggestions()...)
+			}
 		}
-		log.Printf("Connected to Trie Port")
-		// Create a Trie client
-		trie := pb.NewTrieStoreClient(conn)
-
-
-		req := &pb.Key{Key: word}
-		res, err := trie.Get(context.Background(), req)
-		if err != nil {
-			log.Fatalf("Request error %v", err)
-		}
-		log.Printf("Got response for get '%v' : \"%v\" ", word, res.GetSuggestions())
-		return res.GetSuggestions()
-
 	}
-	return make([] string, 0)
+	return suggestions
 }
 
 
@@ -129,79 +132,5 @@ func main() {
 	})
 
 	log.Fatal(http.ListenAndServe(":9000", nil))
-
-
-	/*add("hello", manager)
-	add("hello", manager)
-	add("hello", manager)
-	add("hello", manager)
-	add("hello", manager)
-
-	add("hell", manager)
-
-	add("hi", manager)
-	add("hi", manager)
-	add("hi", manager)
-	add("hi", manager)
-	add("hi", manager)
-	add("hi", manager)
-
-
-	add("hey", manager)
-	add("wassup", manager)
-	add("heat", manager)
-	add("heap", manager)
-	add("hype", manager)
-	add("help", manager)
-	add("high", manager)
-	add("hot", manager)
-	add("hit", manager)
-	add("him", manager)
-	add("hill", manager)
-	add("hike", manager)
-	add("hym", manager)
-	add("hip", manager)
-	add("hip", manager)
-	add("hip", manager)
-	add("hip", manager)
-	add("hip", manager)
-	add("hip", manager)
-
-	add("__main__", manager)
-	add(".škoda", manager)
-	add(".skoda", manager)
-
-
-	add("where is google headquarters located ?", manager)
-	add("where is google NYC office located ?", manager)
-	add("where is google headquarters located ?", manager)
-	add("where is facebook headquarters located ?", manager)
-	add("where is google headquarters located ?", manager)
-	add("where is amazon located ?", manager)
-	add("who is founder of microsoft ?", manager)
-	add("who is founder of google ?", manager)
-	add("who is founder of google ?", manager)
-	add("who is founder of google ?", manager)
-	add("who is founder of facebook ?", manager)
-	add("who is Bill Gates ?", manager)
-	add("who is founder of microsoft ?", manager)
-
-
-	get("he", manager)
-	get("hi", manager)
-	get("h", manager)
-
-	get("hil", manager)
-	get("hip", manager)
-	get("was", manager)
-
-	get("_", manager)
-	get(".", manager)
-
-	get("who is", manager)
-	*/
-
-
-
 
 }

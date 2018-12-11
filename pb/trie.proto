@@ -116,6 +116,7 @@ message heartbeatAckMessage{
 message primaryInitMessage{
     int64 requestNumber = 1;
     repeated portInfo secondaries = 2;
+    bool resetTrie = 3;
 }
 
 message addSecondaryMessage{
@@ -144,6 +145,10 @@ message ReplicateTrieRequest{
 
 message MaxTrieSize{
     int64 length = 1;
+}
+
+message portsInfo{
+    repeated portInfo ports = 1;
 }
 
 
@@ -177,7 +182,8 @@ service Manager {
     rpc IntroduceSelf(introInfo) returns (Empty) {} // Introduce standby to manager
     rpc HeartbeatAck(heartbeatAckMessage) returns (Empty) {} // Ack for heartbeat from primary to manager
 
-    rpc getTriePortInfo(Key) returns (portInfo) {}
+    rpc getTriePortInfoForSet(Key) returns (portInfo) {}
+    rpc getTriePortsInfoForGet(Key) returns (portsInfo) {}
 
 
     //Split Trie RPCs

@@ -62,11 +62,12 @@ func (r *Manager) SplitTrieCreatedAck(ctx context.Context, arg *pb.PortInfo) (*p
 	return &pb.Empty{}, nil
 }
 
-func (r *Manager) GetTriePortInfo(ctx context.Context,arg *pb.Key) (*pb.PortInfo, error) {
+func (r *Manager) GetTriePortInfoForSet(ctx context.Context,arg *pb.Key) (*pb.PortInfo, error) {
 	var prefix = arg.Key
 	for p, id := range primaryMapping{
 		s := strings.Split(p, ":")
 		low, high := s[0], s[1]
+		//todo check this logic. not giving correct results.
 		if prefix >= low && prefix <= high {
 			trieIp, ok := replToTrieMapping[id]
 			if ok{
@@ -77,6 +78,26 @@ func (r *Manager) GetTriePortInfo(ctx context.Context,arg *pb.Key) (*pb.PortInfo
 		}
 	}
 	return &pb.PortInfo{}, errors.New("could not find trie port")
+}
+
+func (r *Manager) GetTriePortsInfoForGet(ctx context.Context,arg *pb.Key) (*pb.PortsInfo, error) {
+	var prefix = arg.Key
+	var result = make([] *pb.PortInfo, 0)
+	for p, id := range primaryMapping{
+		s := strings.Split(p, ":")
+		low, high := s[0], s[1]
+		if prefix >= low && prefix < high || strings.HasPrefix(low, prefix) || strings.HasPrefix(high, prefix){
+			trieIp, ok := replToTrieMapping[id]
+			if ok{
+				result = append(result, &pb.PortInfo{ReplId:trieIp})
+			}
+		}
+	}
+	if len(result) > 0 {
+		return &pb.PortsInfo{Ports:result}, nil
+	} else {
+		return &pb.PortsInfo{Ports:result}, errors.New("could not find trie ports")
+	}
 }
 
 func (r *Manager) HeartbeatAck(ctx context.Context, arg *pb.HeartbeatAckMessage) (*pb.Empty, error) {
@@ -119,10 +140,10 @@ func restartTimer(timer *time.Timer, duration time.Duration) {
 func manage (manage *Manager) {
 
 	//Parameters
-	var maxSecondaries = 3 //Max Secondary for each primary
+	var maxSecondaries = 1 //Max Secondary for each primary
 	var maxLagCount = 50
 	var maxPrimaryHeartBeatMiss = 10
-	var maxTrieSize = 10
+	var maxTrieSize = 5
 
 
 
@@ -240,7 +261,7 @@ func manage (manage *Manager) {
 										}
 									}
 
-									_, err := conn.MakePrimary(context.Background(), &pb.PrimaryInitMessage{RequestNumber:-1, Secondaries:secondaries})
+									_, err := conn.MakePrimary(context.Background(), &pb.PrimaryInitMessage{RequestNumber:-1, Secondaries:secondaries, ResetTrie:false})
 									if err != nil {
 										log.Printf("Error while calling Make Primary RPC for %v, error - %v", minLagSecondaryId, err)
 									} else {
@@ -321,7 +342,7 @@ func manage (manage *Manager) {
 							//Make connection, Call RPC, and immediately close connection
 							conn := pb.NewReplClient(connection)
 							var secondaries = make([] *pb.PortInfo, 0)
-							_, err := conn.MakePrimary(context.Background(), &pb.PrimaryInitMessage{RequestNumber:0, Secondaries:secondaries})
+							_, err := conn.MakePrimary(context.Background(), &pb.PrimaryInitMessage{RequestNumber:0, Secondaries:secondaries, ResetTrie:true})
 							if err != nil {
 								log.Printf("Error while calling Make Primary RPC for %v, error - %v", standbyServer.ReplId, err)
 							}
@@ -491,7 +512,7 @@ func manage (manage *Manager) {
 							break
 						}
 
-						for secondary, _ := range secondaryMapping {
+						for secondary := range secondaryMapping {
 							if secondary == failedServerId {
 								log.Printf("Found failed server %v in Secondary Server list. Removing failed server from list.", failedServerId)
 								delete(failedServers, failedServerId)
@@ -671,7 +692,7 @@ func manage (manage *Manager) {
 							repl := pb.NewReplClient(conn)
 							log.Printf("Trying to make Repl %v as Primary for trie %v", key, val)
 							var secondaries = make([] *pb.PortInfo, 0)
-							_, err := repl.MakePrimary(context.Background(), &pb.PrimaryInitMessage{RequestNumber:0, Secondaries:secondaries})
+							_, err := repl.MakePrimary(context.Background(), &pb.PrimaryInitMessage{RequestNumber:0, Secondaries:secondaries, ResetTrie:false})
 							if err != nil {
 								release = true
 								log.Printf("Error while sending Split Words list to manager : %v", err)
